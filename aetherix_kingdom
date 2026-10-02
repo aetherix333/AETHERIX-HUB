@@ -1,0 +1,810 @@
+--[[
+    ╔══════════════════════════════════════════════╗
+    ║   สร้างอาณาจักรไปกับเอเธอร์ริกซ์  (AETHERIX)    ║
+    ║   เกม: สร้างอาณาจักรมด  |  UI: WindUI          ║
+    ╚══════════════════════════════════════════════╝
+]]
+
+---------------------------------------------------------------------
+-- โหลด WindUI (มีลิงก์สำรอง)
+---------------------------------------------------------------------
+local function LoadWindUI()
+    local sources = {
+        "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua",
+        "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
+    }
+    for _, url in ipairs(sources) do
+        local ok, lib = pcall(function()
+            return loadstring(game:HttpGet(url))()
+        end)
+        if ok and lib then
+            return lib
+        end
+    end
+    return nil
+end
+
+local WindUI = LoadWindUI()
+if not WindUI then
+    warn("[เอเธอร์ริกซ์] โหลด WindUI ไม่สำเร็จ กรุณาเช็คอินเทอร์เน็ต")
+    return
+end
+
+---------------------------------------------------------------------
+-- บริการและตัวแปรหลัก
+---------------------------------------------------------------------
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local Lighting          = game:GetService("Lighting")
+local VirtualUser       = game:GetService("VirtualUser")
+local CoreGui           = game:GetService("CoreGui")
+local Workspace         = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local GAME_PLACE_ID = 78490532994307
+
+local Connections = {}
+local function Track(conn)
+    Connections[#Connections + 1] = conn
+    return conn
+end
+
+local function Notify(title, content, duration)
+    pcall(function()
+        WindUI:Notify({
+            Title = title,
+            Content = content,
+            Duration = duration or 4,
+            Icon = "crown",
+        })
+    end)
+end
+
+local function GetChar()
+    return LocalPlayer.Character
+end
+local function GetHum()
+    local c = GetChar()
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+local function GetRoot()
+    local c = GetChar()
+    return c and (c:FindFirstChild("HumanoidRootPart"))
+end
+
+local State = {
+    Speed = false, SpeedValue = 40,
+    Jump = false, JumpValue = 100,
+    InfJump = false,
+    Noclip = false,
+    Fly = false, FlySpeed = 60,
+    AutoPrompt = false, PromptRange = 20,
+    AntiAfk = true,
+    ESP = false,
+    Fullbright = false,
+}
+
+---------------------------------------------------------------------
+-- หน้าต่างหลัก
+---------------------------------------------------------------------
+local Window = WindUI:CreateWindow({
+    Title = "สร้างอาณาจักรไปกับเอเธอร์ริกซ์",
+    Icon = "crown",
+    Author = "โดย AETHERIX",
+    Folder = "AetherixKingdom",
+    Size = UDim2.fromOffset(580, 440),
+    Transparent = true,
+    Theme = "Dark",
+    SideBarWidth = 190,
+    HasOutline = true,
+})
+
+pcall(function()
+    Window:Tag({ Title = "v1.0", Color = Color3.fromHex("#8E2DE2") })
+end)
+
+pcall(function()
+    Window:EditOpenButton({
+        Title = "เอเธอร์ริกซ์",
+        Icon = "crown",
+        CornerRadius = UDim.new(0, 16),
+        StrokeThickness = 2,
+        Color = ColorSequence.new(Color3.fromHex("#8E2DE2"), Color3.fromHex("#F9D423")),
+        Draggable = true,
+    })
+end)
+
+---------------------------------------------------------------------
+-- ตั้งค่า Config (บันทึก/โหลด)
+---------------------------------------------------------------------
+local Config
+pcall(function()
+    Config = Window.ConfigManager:CreateConfig("aetherix_default")
+end)
+local function Reg(key, element)
+    if Config and element then
+        pcall(function() Config:Register(key, element) end)
+    end
+    return element
+end
+
+---------------------------------------------------------------------
+-- แท็บ: หน้าหลัก
+---------------------------------------------------------------------
+local TabMain = Window:Tab({ Title = "หน้าหลัก", Icon = "home" })
+
+local executor = "ไม่ทราบ"
+pcall(function() executor = identifyexecutor() end)
+
+TabMain:Paragraph({
+    Title = "ยินดีต้อนรับสู่เอเธอร์ริกซ์",
+    Desc = "สคริปต์ช่วยเล่น \"สร้างอาณาจักรมด\"\nเมนูทั้งหมดเป็นภาษาไทย กดปุ่มมงกุฎเพื่อเปิด/ปิดเมนู",
+    Image = "crown",
+    ImageSize = 40,
+})
+
+TabMain:Paragraph({
+    Title = "ข้อมูลระบบ",
+    Desc = "ผู้เล่น: " .. LocalPlayer.DisplayName ..
+        "\nPlaceId: " .. tostring(game.PlaceId) ..
+        "\nตัวรัน: " .. tostring(executor),
+})
+
+if game.PlaceId ~= GAME_PLACE_ID then
+    TabMain:Paragraph({
+        Title = "คำเตือน",
+        Desc = "คุณไม่ได้อยู่ในแมพ \"สร้างอาณาจักรมด\" ฟังก์ชันบางอย่างอาจใช้งานไม่ได้",
+        Color = "Red",
+    })
+end
+
+TabMain:Button({
+    Title = "คัดลอก PlaceId",
+    Desc = "คัดลอกไอดีแมพไปยังคลิปบอร์ด",
+    Icon = "copy",
+    Callback = function()
+        if setclipboard then
+            setclipboard(tostring(game.PlaceId))
+            Notify("คัดลอกแล้ว", "คัดลอก PlaceId เรียบร้อย")
+        else
+            Notify("ไม่รองรับ", "ตัวรันของคุณไม่รองรับ setclipboard")
+        end
+    end,
+})
+
+---------------------------------------------------------------------
+-- แท็บ: ตัวละคร
+---------------------------------------------------------------------
+local TabPlayer = Window:Tab({ Title = "ตัวละคร", Icon = "user" })
+
+Reg("SpeedOn", TabPlayer:Toggle({
+    Title = "เปิดความเร็วเดิน",
+    Desc = "ปรับความเร็ววิ่งของตัวละคร",
+    Value = false,
+    Callback = function(v)
+        State.Speed = v
+        if not v then
+            local h = GetHum()
+            if h then h.WalkSpeed = 16 end
+        end
+    end,
+}))
+
+Reg("SpeedVal", TabPlayer:Slider({
+    Title = "ค่าความเร็วเดิน",
+    Step = 1,
+    Value = { Min = 16, Max = 200, Default = 40 },
+    Callback = function(v) State.SpeedValue = v end,
+}))
+
+TabPlayer:Divider()
+
+Reg("JumpOn", TabPlayer:Toggle({
+    Title = "เปิดแรงกระโดด",
+    Value = false,
+    Callback = function(v)
+        State.Jump = v
+        if not v then
+            local h = GetHum()
+            if h then
+                h.UseJumpPower = true
+                h.JumpPower = 50
+            end
+        end
+    end,
+}))
+
+Reg("JumpVal", TabPlayer:Slider({
+    Title = "ค่าแรงกระโดด",
+    Step = 1,
+    Value = { Min = 50, Max = 300, Default = 100 },
+    Callback = function(v) State.JumpValue = v end,
+}))
+
+Reg("InfJump", TabPlayer:Toggle({
+    Title = "กระโดดไม่จำกัด",
+    Desc = "กดกระโดดซ้ำกลางอากาศได้เรื่อยๆ",
+    Value = false,
+    Callback = function(v) State.InfJump = v end,
+}))
+
+TabPlayer:Divider()
+
+Reg("Noclip", TabPlayer:Toggle({
+    Title = "ทะลุกำแพง (Noclip)",
+    Value = false,
+    Callback = function(v) State.Noclip = v end,
+}))
+
+Reg("FlyOn", TabPlayer:Toggle({
+    Title = "โหมดบิน",
+    Desc = "บินไปตามทิศที่กล้องมอง (มือถือ: เลื่อนกล้องขึ้น/ลงเพื่อบินขึ้น/ลง)\nคอม: Space = ขึ้น, Ctrl ซ้าย = ลง",
+    Value = false,
+    Callback = function(v)
+        State.Fly = v
+        local h = GetHum()
+        if h then h.PlatformStand = v end
+        if not v then
+            local r = GetRoot()
+            if r then r.AssemblyLinearVelocity = Vector3.zero end
+        end
+    end,
+}))
+
+Reg("FlyVal", TabPlayer:Slider({
+    Title = "ความเร็วบิน",
+    Step = 1,
+    Value = { Min = 20, Max = 250, Default = 60 },
+    Callback = function(v) State.FlySpeed = v end,
+}))
+
+-- ลูปควบคุมตัวละคร
+Track(RunService.Heartbeat:Connect(function()
+    local hum = GetHum()
+    if not hum then return end
+
+    if State.Speed then
+        hum.WalkSpeed = State.SpeedValue
+    end
+    if State.Jump then
+        hum.UseJumpPower = true
+        hum.JumpPower = State.JumpValue
+    end
+
+    if State.Fly then
+        local root = GetRoot()
+        local cam = Workspace.CurrentCamera
+        if root and cam then
+            local move = hum.MoveDirection
+            local dir = Vector3.zero
+            if move.Magnitude > 0 then
+                local lv = cam.CFrame:VectorToObjectSpace(move)
+                dir = cam.CFrame.RightVector * lv.X + cam.CFrame.LookVector * (-lv.Z)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                dir = dir + Vector3.new(0, 1, 0)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+                dir = dir - Vector3.new(0, 1, 0)
+            end
+            if dir.Magnitude > 0 then
+                dir = dir.Unit
+            end
+            hum.PlatformStand = true
+            root.AssemblyLinearVelocity = dir * State.FlySpeed
+        end
+    end
+end))
+
+Track(RunService.Stepped:Connect(function()
+    if State.Noclip or State.Fly then
+        local c = GetChar()
+        if c then
+            for _, p in ipairs(c:GetDescendants()) do
+                if p:IsA("BasePart") and p.CanCollide then
+                    p.CanCollide = false
+                end
+            end
+        end
+    end
+end))
+
+Track(UserInputService.JumpRequest:Connect(function()
+    if State.InfJump then
+        local h = GetHum()
+        if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end))
+
+---------------------------------------------------------------------
+-- แท็บ: ออโต้
+---------------------------------------------------------------------
+local TabAuto = Window:Tab({ Title = "ระบบออโต้", Icon = "zap" })
+
+-- เก็บ ProximityPrompt ทั้งหมดไว้ (เร็วกว่าไล่หาทุกรอบ)
+local Prompts = {}
+local function AddPrompt(o)
+    if o:IsA("ProximityPrompt") then Prompts[o] = true end
+end
+for _, o in ipairs(Workspace:GetDescendants()) do AddPrompt(o) end
+Track(Workspace.DescendantAdded:Connect(AddPrompt))
+Track(Workspace.DescendantRemoving:Connect(function(o)
+    if Prompts[o] then Prompts[o] = nil end
+end))
+
+local function PromptPosition(p)
+    local par = p.Parent
+    if not par then return nil end
+    if par:IsA("BasePart") then return par.Position end
+    if par:IsA("Attachment") then return par.WorldPosition end
+    if par:IsA("Model") then
+        local ok, cf = pcall(function() return par:GetPivot() end)
+        if ok then return cf.Position end
+    end
+    return nil
+end
+
+Reg("AutoPrompt", TabAuto:Toggle({
+    Title = "กดปุ่มโต้ตอบอัตโนมัติ",
+    Desc = "กดปุ่ม (Proximity Prompt) ที่อยู่ในระยะให้เอง เช่น เก็บของ/โต้ตอบ",
+    Value = false,
+    Callback = function(v)
+        State.AutoPrompt = v
+        if v and not fireproximityprompt then
+            Notify("ไม่รองรับ", "ตัวรันของคุณไม่มีฟังก์ชัน fireproximityprompt")
+            State.AutoPrompt = false
+        end
+    end,
+}))
+
+Reg("PromptRange", TabAuto:Slider({
+    Title = "ระยะกดปุ่ม",
+    Step = 1,
+    Value = { Min = 5, Max = 60, Default = 20 },
+    Callback = function(v) State.PromptRange = v end,
+}))
+
+task.spawn(function()
+    while task.wait(0.25) do
+        if State.AutoPrompt and fireproximityprompt then
+            local root = GetRoot()
+            if root then
+                for p in pairs(Prompts) do
+                    if p.Parent and p.Enabled then
+                        local pos = PromptPosition(p)
+                        if pos and (pos - root.Position).Magnitude <= State.PromptRange then
+                            pcall(fireproximityprompt, p)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+TabAuto:Divider()
+
+Reg("AntiAfk", TabAuto:Toggle({
+    Title = "กันหลุดเมื่อไม่ได้ขยับ (Anti-AFK)",
+    Desc = "ป้องกันโดนเตะเพราะ AFK",
+    Value = true,
+    Callback = function(v) State.AntiAfk = v end,
+}))
+
+Track(LocalPlayer.Idled:Connect(function()
+    if State.AntiAfk then
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+    end
+end))
+
+---------------------------------------------------------------------
+-- แท็บ: เทเลพอร์ต
+---------------------------------------------------------------------
+local TabTp = Window:Tab({ Title = "เทเลพอร์ต", Icon = "map-pin" })
+
+local function PlayerNames()
+    local t = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then t[#t + 1] = p.Name end
+    end
+    table.sort(t)
+    return t
+end
+
+local SelectedPlayer
+local PlayerDropdown = TabTp:Dropdown({
+    Title = "เลือกผู้เล่น",
+    Values = PlayerNames(),
+    Callback = function(v) SelectedPlayer = v end,
+})
+
+TabTp:Button({
+    Title = "รีเฟรชรายชื่อผู้เล่น",
+    Icon = "refresh-cw",
+    Callback = function()
+        pcall(function() PlayerDropdown:Refresh(PlayerNames()) end)
+        Notify("รีเฟรชแล้ว", "อัปเดตรายชื่อผู้เล่นเรียบร้อย", 2)
+    end,
+})
+
+TabTp:Button({
+    Title = "วาร์ปไปหาผู้เล่นที่เลือก",
+    Icon = "send",
+    Callback = function()
+        local target = SelectedPlayer and Players:FindFirstChild(SelectedPlayer)
+        local tr = target and target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        local r = GetRoot()
+        if tr and r then
+            r.CFrame = tr.CFrame * CFrame.new(0, 0, 3)
+        else
+            Notify("วาร์ปไม่ได้", "กรุณาเลือกผู้เล่นที่ยังอยู่ในเกม")
+        end
+    end,
+})
+
+TabTp:Divider()
+
+local SavedCFrame
+TabTp:Button({
+    Title = "บันทึกตำแหน่งปัจจุบัน",
+    Icon = "bookmark",
+    Callback = function()
+        local r = GetRoot()
+        if r then
+            SavedCFrame = r.CFrame
+            Notify("บันทึกแล้ว", "จำตำแหน่งนี้ไว้เรียบร้อย", 2)
+        end
+    end,
+})
+
+TabTp:Button({
+    Title = "กลับไปตำแหน่งที่บันทึก",
+    Icon = "undo-2",
+    Callback = function()
+        local r = GetRoot()
+        if r and SavedCFrame then
+            r.CFrame = SavedCFrame
+        else
+            Notify("ยังไม่มีตำแหน่ง", "กรุณากดบันทึกตำแหน่งก่อน")
+        end
+    end,
+})
+
+---------------------------------------------------------------------
+-- แท็บ: ภาพและประสิทธิภาพ
+---------------------------------------------------------------------
+local TabVisual = Window:Tab({ Title = "ภาพ/ประสิทธิภาพ", Icon = "eye" })
+
+-- ESP ผู้เล่น
+local EspObjects = {}
+local function ClearEsp()
+    for p, h in pairs(EspObjects) do
+        pcall(function() h:Destroy() end)
+        EspObjects[p] = nil
+    end
+end
+local function EspParent()
+    local ok, ui = pcall(function() return gethui and gethui() end)
+    return (ok and ui) or CoreGui
+end
+
+Reg("ESP", TabVisual:Toggle({
+    Title = "ไฮไลต์ผู้เล่นอื่น (ESP)",
+    Desc = "มองเห็นผู้เล่นอื่นทะลุกำแพง",
+    Value = false,
+    Callback = function(v)
+        State.ESP = v
+        if not v then ClearEsp() end
+    end,
+}))
+
+task.spawn(function()
+    while task.wait(1.5) do
+        if State.ESP then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and p.Character then
+                    local h = EspObjects[p]
+                    if not h or not h.Parent or h.Adornee ~= p.Character then
+                        if h then pcall(function() h:Destroy() end) end
+                        local hl = Instance.new("Highlight")
+                        hl.FillColor = Color3.fromHex("#8E2DE2")
+                        hl.OutlineColor = Color3.fromHex("#F9D423")
+                        hl.FillTransparency = 0.5
+                        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                        hl.Adornee = p.Character
+                        hl.Parent = EspParent()
+                        EspObjects[p] = hl
+                    end
+                end
+            end
+            for p, h in pairs(EspObjects) do
+                if not p.Parent then
+                    pcall(function() h:Destroy() end)
+                    EspObjects[p] = nil
+                end
+            end
+        end
+    end
+end)
+
+-- แสงสว่าง
+local OrigLighting = {
+    Brightness = Lighting.Brightness,
+    ClockTime = Lighting.ClockTime,
+    FogEnd = Lighting.FogEnd,
+    GlobalShadows = Lighting.GlobalShadows,
+    Ambient = Lighting.Ambient,
+}
+
+Reg("Fullbright", TabVisual:Toggle({
+    Title = "สว่างตลอด (Fullbright)",
+    Value = false,
+    Callback = function(v)
+        State.Fullbright = v
+        if not v then
+            for k, val in pairs(OrigLighting) do
+                pcall(function() Lighting[k] = val end)
+            end
+        end
+    end,
+}))
+
+Track(RunService.RenderStepped:Connect(function()
+    if State.Fullbright then
+        Lighting.Brightness = 2
+        Lighting.ClockTime = 14
+        Lighting.FogEnd = 1e6
+        Lighting.GlobalShadows = false
+        Lighting.Ambient = Color3.fromRGB(180, 180, 180)
+    end
+end))
+
+TabVisual:Button({
+    Title = "ลดแลค (FPS Boost)",
+    Desc = "ลดเงา/เอฟเฟกต์/คุณภาพกราฟิก (ปิดแล้วต้องรีจอยเพื่อคืนค่า)",
+    Icon = "gauge",
+    Callback = function()
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+        pcall(function() Lighting.GlobalShadows = false end)
+        for _, o in ipairs(Workspace:GetDescendants()) do
+            if o:IsA("ParticleEmitter") or o:IsA("Trail") or o:IsA("Smoke")
+                or o:IsA("Fire") or o:IsA("Sparkles") then
+                o.Enabled = false
+            elseif o:IsA("BasePart") then
+                o.Material = Enum.Material.SmoothPlastic
+                o.CastShadow = false
+            end
+        end
+        for _, o in ipairs(Lighting:GetChildren()) do
+            if o:IsA("PostEffect") or o:IsA("Atmosphere") then
+                pcall(function() o.Enabled = false end)
+            end
+        end
+        Notify("ลดแลคแล้ว", "ปรับกราฟิกให้เบาลงเรียบร้อย")
+    end,
+})
+
+---------------------------------------------------------------------
+-- แท็บ: เครื่องมือดักรีโมต (สำหรับหาค่าที่เกมส่งไปเซิร์ฟเวอร์)
+---------------------------------------------------------------------
+local TabSpy = Window:Tab({ Title = "ดักรีโมต", Icon = "radio" })
+
+TabSpy:Paragraph({
+    Title = "เครื่องมือดักรีโมต",
+    Desc = "เปิดแล้วไปกดทำสิ่งที่ต้องการในเกม (เช่น เก็บอาหาร ขาย อัปเกรด) "
+        .. "สคริปต์จะจดว่าเกมส่งอะไรไปเซิร์ฟเวอร์ แล้วกด \"คัดลอกบันทึก\" ส่งให้ผู้พัฒนาเพื่อทำระบบออโต้ให้ตรงกับเกม",
+})
+
+local Spy = {
+    Enabled = false,
+    Logs = {},
+    Max = 200,
+    Ignore = {
+        TrackingCenterEvent = true, MatterDebuggerRemote = true, MatterDiff = true,
+        MatterStartSync = true, PostieSent = true, PostieReceived = true,
+        GameAnalyticsRemoteConfigs = true, GameAnalyticsError = true, WuKongSync = true,
+    },
+}
+
+local function Ser(v, depth)
+    depth = depth or 0
+    local t = typeof(v)
+    if t == "string" then
+        return string.format("%q", v)
+    elseif t == "table" then
+        if depth > 3 then return "{...}" end
+        local parts, n = {}, 0
+        for k, x in pairs(v) do
+            n = n + 1
+            if n > 25 then parts[#parts + 1] = "..."; break end
+            parts[#parts + 1] = "[" .. Ser(k, depth + 1) .. "]=" .. Ser(x, depth + 1)
+        end
+        return "{" .. table.concat(parts, ", ") .. "}"
+    elseif t == "Instance" then
+        return "<" .. v.ClassName .. "> " .. v:GetFullName()
+    else
+        return tostring(v)
+    end
+end
+
+local SpyHooked = false
+local function InstallSpy()
+    if SpyHooked then return true end
+    if not (hookmetamethod and getnamecallmethod and newcclosure and checkcaller) then
+        return false
+    end
+    local old
+    old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if Spy.Enabled and (method == "FireServer" or method == "InvokeServer")
+            and not checkcaller() then
+            pcall(function()
+                if typeof(self) == "Instance"
+                    and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction"))
+                    and not Spy.Ignore[self.Name] then
+                    local args = table.pack(...)
+                    local list = {}
+                    for i = 1, args.n do list[i] = Ser(args[i]) end
+                    local line = string.format("[%s] %s:%s(%s)",
+                        os.date("%H:%M:%S"), self:GetFullName(), method, table.concat(list, ", "))
+                    Spy.Logs[#Spy.Logs + 1] = line
+                    if #Spy.Logs > Spy.Max then table.remove(Spy.Logs, 1) end
+                end
+            end)
+        end
+        return old(self, ...)
+    end))
+    SpyHooked = true
+    return true
+end
+
+TabSpy:Toggle({
+    Title = "เปิดตัวดักรีโมต",
+    Value = false,
+    Callback = function(v)
+        if v then
+            if InstallSpy() then
+                Spy.Enabled = true
+                Notify("เปิดแล้ว", "เริ่มจดการเรียกรีโมตของเกม")
+            else
+                Spy.Enabled = false
+                Notify("ไม่รองรับ", "ตัวรันของคุณไม่รองรับ hookmetamethod")
+            end
+        else
+            Spy.Enabled = false
+        end
+    end,
+})
+
+TabSpy:Button({
+    Title = "คัดลอกบันทึก",
+    Desc = "คัดลอกรายการที่ดักได้ทั้งหมดไปยังคลิปบอร์ด",
+    Icon = "copy",
+    Callback = function()
+        if #Spy.Logs == 0 then
+            Notify("ยังไม่มีข้อมูล", "เปิดตัวดักแล้วลองกดทำอะไรในเกมก่อน")
+            return
+        end
+        if setclipboard then
+            setclipboard(table.concat(Spy.Logs, "\n"))
+            Notify("คัดลอกแล้ว", "คัดลอก " .. #Spy.Logs .. " รายการ")
+        else
+            Notify("ไม่รองรับ", "ตัวรันของคุณไม่รองรับ setclipboard")
+        end
+    end,
+})
+
+TabSpy:Button({
+    Title = "ล้างบันทึก",
+    Icon = "trash-2",
+    Callback = function()
+        Spy.Logs = {}
+        Notify("ล้างแล้ว", "ลบบันทึกทั้งหมดเรียบร้อย", 2)
+    end,
+})
+
+---------------------------------------------------------------------
+-- แท็บ: ตั้งค่า
+---------------------------------------------------------------------
+local TabSettings = Window:Tab({ Title = "ตั้งค่า", Icon = "settings" })
+
+local themeNames = {}
+pcall(function()
+    for name in pairs(WindUI:GetThemes()) do themeNames[#themeNames + 1] = name end
+    table.sort(themeNames)
+end)
+if #themeNames == 0 then themeNames = { "Dark", "Light" } end
+
+TabSettings:Dropdown({
+    Title = "ธีมสี",
+    Values = themeNames,
+    Value = "Dark",
+    Callback = function(v)
+        pcall(function() WindUI:SetTheme(v) end)
+    end,
+})
+
+TabSettings:Toggle({
+    Title = "เมนูโปร่งใส",
+    Value = true,
+    Callback = function(v)
+        pcall(function() Window:ToggleTransparency(v) end)
+    end,
+})
+
+TabSettings:Keybind({
+    Title = "ปุ่มเปิด/ปิดเมนู",
+    Desc = "ปุ่มลัดบนคีย์บอร์ด",
+    Value = "RightShift",
+    Callback = function(v)
+        pcall(function()
+            Window:SetToggleKey(Enum.KeyCode[v])
+        end)
+    end,
+})
+
+TabSettings:Divider()
+
+TabSettings:Button({
+    Title = "บันทึกการตั้งค่า",
+    Icon = "save",
+    Callback = function()
+        if Config then
+            local ok = pcall(function() Config:Save() end)
+            Notify(ok and "บันทึกแล้ว" or "บันทึกไม่สำเร็จ",
+                ok and "บันทึกการตั้งค่าเรียบร้อย" or "ตัวรันอาจไม่รองรับการเขียนไฟล์")
+        end
+    end,
+})
+
+TabSettings:Button({
+    Title = "โหลดการตั้งค่า",
+    Icon = "folder-open",
+    Callback = function()
+        if Config then
+            local ok = pcall(function() Config:Load() end)
+            Notify(ok and "โหลดแล้ว" or "โหลดไม่สำเร็จ",
+                ok and "โหลดการตั้งค่าเรียบร้อย" or "ยังไม่มีไฟล์ตั้งค่าที่บันทึกไว้")
+        end
+    end,
+})
+
+TabSettings:Divider()
+
+TabSettings:Button({
+    Title = "ปิดสคริปต์ทั้งหมด",
+    Desc = "ปิดทุกฟังก์ชันและปิดหน้าต่างเมนู",
+    Icon = "power",
+    Color = Color3.fromHex("#ff4830"),
+    Callback = function()
+        for k in pairs(State) do
+            if type(State[k]) == "boolean" then State[k] = false end
+        end
+        Spy.Enabled = false
+        ClearEsp()
+        local h = GetHum()
+        if h then
+            h.PlatformStand = false
+            h.WalkSpeed = 16
+            h.UseJumpPower = true
+            h.JumpPower = 50
+        end
+        for k, val in pairs(OrigLighting) do
+            pcall(function() Lighting[k] = val end)
+        end
+        for _, c in ipairs(Connections) do
+            pcall(function() c:Disconnect() end)
+        end
+        pcall(function() Window:Destroy() end)
+    end,
+})
+
+---------------------------------------------------------------------
+-- เริ่มต้น
+---------------------------------------------------------------------
+pcall(function() Window:SelectTab(1) end)
+Notify("เอเธอร์ริกซ์", "โหลดสคริปต์สำเร็จ ขอให้สนุกกับการสร้างอาณาจักร!", 5)
