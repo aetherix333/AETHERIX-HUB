@@ -1,12 +1,12 @@
--- PAYOMBØYZ +1 LOOT A FORGE (UI: WindUI by Footagesus)
+-- AETHERIX +1 LOOT A FORGE (UI: WindUI by Footagesus)
 --[[
-    ╔═══════════════════════════════════════════════════════════════╗
-    ║              PAYOMBØYZ +1 LOOT A FORGE v4.9.2                ║
-    ║   Game   : [Enhance]+1 Loot To Forge                          ║
-    ║   UI     : PAYOMBØYZ Obsidian Glassmorphic / Dynamic Comic    ║
-    ║   Engine : 24/7 Automation, Boss Hunter, Webhook & Gacha      ║
-    ║   System : Dual Language Engine (Thai Default / English)      ║
-    ╚═══════════════════════════════════════════════════════════════╝
+    ◜.  ✦ ₊ ✿  . ₊  ✦ .  + .   ✿.  ✦ ₊ ✿  . ₊  ✦ .  + .   ✿ ✦ .  + .   ✿
+    ︱              AETHERIX +1 LOOT A FORGE v4.9.2                       ︱
+    ︱   Game   : [Enhance]+1 Loot To Forge                               ︱
+    ︱   UI     : PAYOMBØYZ Obsidian Glassmorphic / Dynamic Comic         ︱
+    ︱   Engine : 24/7 Automation, Boss Hunter, Webhook & Gacha           ︱
+    ︱   System : Dual Language Engine (Thai Default / English)           ︱
+    ◟.  ✦ ₊ ✿  . ₊  ✦ .  + .   ✿.  ✦ ₊ ✿  . ₊  ✦ .  + .   ✿ ✦ .  + .   ✿
 ]]
 
 -- ─────────────────────────────────────────────────────────────
@@ -1906,10 +1906,10 @@ BuildUI = function()
     local startTheme = "Dark"
 
     local EngineWindow = Library:CreateWindow({
-        Title = State.Language == "TH" and "ตีดาบไปกับพยอมบอย" or "PAYOMBØYZ +1 LOOT A FORGE",
+        Title = State.Language == "TH" and "ตีดาบไปกับเอเธอร์ริกซ์ฮับ" or "AETHERIX +1 LOOT A FORGE",
         Icon = "sword",
         Author = T("WindowSub"),
-        Folder = "PayomboyZ_LootForge",
+        Folder = "AETHERIX_LootForge",
         Size = UDim2.fromOffset(620, 470),
         Transparent = true,
         Theme = startTheme,
