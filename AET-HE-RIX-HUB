@@ -208,8 +208,8 @@ local Locales = {
         Tab1  = "หน้าหลัก 24/7",
         Tab2  = "ฟาร์มแร่ & ดูดของ",
         Tab3  = "ดันเจี้ยน & ไต่ด่าน",
-        Tab4  = "สไนป์บอสแร่ยักษ์",
-        Tab5  = "ฝึกพลัง & อัปเกรด",
+        Tab4  = "บอสสไนป์ & ตีบอส",
+        Tab5  = "ฝึกพลัง & ไต่ด่าน",
         Tab6  = "หลอม & อุปกรณ์",
         Tab7  = "คลาส สกิล & สัตว์เลี้ยง",
         Tab8  = "รับรางวัล & โค้ดฟรี",
@@ -2185,7 +2185,7 @@ end
 -- ═════════════════════════════════════════════════════════════
 -- Images (edit here): window icon / open-button icon (URL or rbxassetid), Discord card image
 local UI_IMAGE      = "https://cdn.discordapp.com/attachments/1555842577872199771/1556266446949195796/IMG_20261004_113443.png?backend=b2&ex=6ac38992&is=6ac23812&hm=12317b109fbb5c2c13407f65287ce3bd77596bd90d191b2fa3a0327fdc3753c1&"
-local DISCORD_IMAGE = "rbxassetid://101420567427795"
+local DISCORD_IMAGE = "rbxassetid://111127942452643"
 local AetherixUI = (function()
     local Lib = {}
     local Players = game:GetService("Players")
@@ -2565,8 +2565,6 @@ BuildUI = function()
         HomeTab:Paragraph({
             Title = "AETHERIX HUB | Discord",
             Desc = isTHUI and "ดิสคอร์ดสำหรับแจ้งปัญหา / ขอความช่วยเหลือ" or "Discord support | report issues",
-            Image = DISCORD_IMAGE,
-            ImageSize = 50,
             Buttons = {
                 {
                     Title = isTHUI and "คัดลอก" or "Copy",
