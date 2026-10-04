@@ -2185,8 +2185,7 @@ end
 -- ═════════════════════════════════════════════════════════════
 -- Images (edit here): window icon / open-button icon (URL or rbxassetid), Discord card image
 local UI_IMAGE      = "https://cdn.discordapp.com/attachments/1555842577872199771/1556266446949195796/IMG_20261004_113443.png?backend=b2&ex=6ac38992&is=6ac23812&hm=12317b109fbb5c2c13407f65287ce3bd77596bd90d191b2fa3a0327fdc3753c1&"
-local DISCORD_IMAGE = "https://cdn.discordapp.com/attachments/1555842577872199771/1556266446949195796/IMG_20261004_113443.png?backend=b2&ex=6ac38992&is=6ac23812&hm=12317b109fbb5c2c13407f65287ce3bd77596bd90d191b2fa3a0327fdc3753c1&"
-
+local DISCORD_IMAGE = "rbxassetid://73073458410412"
 local AetherixUI = (function()
     local Lib = {}
     local Players = game:GetService("Players")
