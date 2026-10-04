@@ -2,7 +2,7 @@
 --[[
     ◜.  ✦ ₊ ✿  . ₊  ✦ .  + .   ✿.  ✦ ₊ ✿  . ₊  ✦ .  + .   ✿ ✦ .  + .   ✿
     ︱              AETHERIX +1 LOOT A FORGE v4.9.4 PRO                   ︱
-    ︱   Game   : [Boss] +1 Loot To Forge                              ︱
+    ︱   Game   : [Boss] +1 Loot To Forge                                 ︱
     ︱   UI     : AETHERIX Obsidian Glassmorphic / Dynamic Comic          ︱
     ︱   Engine : 24/7 Automation, Boss Hunter, Webhook & Gacha           ︱
     ︱   System : Dual Language Engine (Thai Default / English)           ︱
@@ -14,11 +14,11 @@
 -- ─────────────────────────────────────────────────────────────
 -- ── AETHERIX branding (edit here) ───────────────────────────
 -- Logo: image link (https://...png/jpg) OR "rbxassetid://123456". Empty = default sword icon.
-local AETHERIX_LOGO    = ""
+local AETHERIX_LOGO    = "rbxassetid://73073458410412"
 -- Discord invite shown as a "Copy" button in the Home tab. Empty = button hidden.
-local AETHERIX_DISCORD = ""
+local AETHERIX_DISCORD = "https://discord.gg/nqmPVSQhQC"
 local function logoIcon()
-    return (AETHERIX_LOGO ~= "" and AETHERIX_LOGO) or "sword"
+    return (AETHERIX_LOGO ~= "rbxassetid://73073458410412" and AETHERIX_LOGO) or "sword"
 end
 
 local CurrentLibrary = nil
