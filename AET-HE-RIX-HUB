@@ -2409,7 +2409,7 @@ local AetherixUI = (function()
             HideSearchBar = false,
             ScrollBarEnabled = true,
             NewElements = true,
-            Topbar = { Height = 56, ButtonsType = "Mac" },
+            Topbar = { Height = 60, ButtonsType = "Mac" },
             OpenButton = openBtn,                   -- draggable open button
             User = { Enabled = true, Anonymous = false, Callback = function() end },
         })
