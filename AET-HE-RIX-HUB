@@ -2409,7 +2409,7 @@ local AetherixUI = (function()
             HideSearchBar = false,
             ScrollBarEnabled = true,
             NewElements = true,
-            Topbar = { Height = 44, ButtonsType = "Mac" },
+            Topbar = { Height = 56, ButtonsType = "Mac" },
             OpenButton = openBtn,                   -- draggable open button
             User = { Enabled = true, Anonymous = false, Callback = function() end },
         })
@@ -2558,8 +2558,6 @@ BuildUI = function()
             .. "\n[Enhance]+1 Loot To Forge\n"
             .. (isTHUI and "เปิด/ปิดเมนู: " or "Toggle menu: ") .. tostring(Library.ToggleKeyName or "RightShift")
             .. (isTHUI and "\nลากแถบด้านบนเพื่อย้าย • ลากมุมขวาล่างเพื่อปรับขนาด" or "\nDrag the top bar to move • drag the bottom-right corner to resize"),
-        Image = AETHERIX_LOGO,
-        ImageSize = 50,
     })
     if AETHERIX_DISCORD ~= "" then
         HomeTab:Paragraph({
