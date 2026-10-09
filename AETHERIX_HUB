@@ -1,9 +1,9 @@
--- AETHERIX +1 LOOT A FORGE (UI: WindUI - Willow Glass, draggable + resizable)
+-- AETHERIX +1 LOOT A FORGE (UI: WindUI - Obsidian, responsive + resizable)
 --[[
     ◜.  ✦ ₊ ✿  . ₊  ✦ .  + .   ✿.  ✦ ₊ ✿  . ₊  ✦ .  + .   ✿ ✦ .  + .   ✿
-    ︱              AETHERIX +1 LOOT A FORGE v4.9.4 PRO                   ︱
+    ︱              AETHERIX +1 LOOT A FORGE v5.0 PRO                   ︱
     ︱   Game   : [Boss] +1 Loot To Forge                                 ︱
-    ︱   UI     : WindUI Willow Glass (drag + resize)                ︱
+    ︱   UI     : WindUI Obsidian (drag + resize)                ︱
     ︱   Engine : 24/7 Automation, Boss Hunter, Webhook & Gacha           ︱
     ︱   System : Dual Language Engine (Thai Default / English)           ︱
     ◟.  ✦ ₊ ✿  . ₊  ✦ .  + .   ✿.  ✦ ₊ ✿  . ₊  ✦ .  + .   ✿ ✦ .  + .   ✿
@@ -18,7 +18,7 @@ local AETHERIX_LOGO    = "rbxassetid://73073458410412"
 -- Discord invite shown as a "Copy" button in the Home tab. Empty = button hidden.
 local AETHERIX_DISCORD = "https://discord.gg/nqmPVSQhQC"
 local function logoIcon()
-    return (AETHERIX_LOGO ~= "rbxassetid://73073458410412" and AETHERIX_LOGO) or "sword"
+    return (AETHERIX_LOGO ~= "" and AETHERIX_LOGO) or "sword"
 end
 
 local CurrentLibrary = nil
@@ -52,7 +52,37 @@ local HttpService       = game:GetService("HttpService")
 local GuiService        = game:GetService("GuiService")
 
 local LocalPlayer = Players.LocalPlayer
-local RemoteRoot  = ReplicatedStorage:WaitForChild("Remote", 15)
+assert(LocalPlayer, "[AETHERIX] Run AETHERIX_HUB on the client")
+local RemoteRoot = ReplicatedStorage:FindFirstChild("Remote")
+local Session = { Alive = true, Connections = {}, RestoreCollision = setmetatable({}, { __mode = "k" }) }
+local sessionEnv = (getgenv and getgenv()) or shared or _G
+if sessionEnv.AETHERIX_SESSION and sessionEnv.AETHERIX_SESSION.Destroy then
+    sessionEnv.AETHERIX_SESSION.Destroy()
+end
+sessionEnv.AETHERIX_SESSION = Session
+function Session:Connect(signal, callback)
+    local connection = signal:Connect(function(...)
+        if self.Alive then callback(...) end
+    end)
+    table.insert(self.Connections, connection)
+    return connection
+end
+function Session:RestorePhysics()
+    for part, canCollide in pairs(self.RestoreCollision) do
+        if part.Parent then part.CanCollide = canCollide end
+        self.RestoreCollision[part] = nil
+    end
+end
+function Session.Destroy()
+    if not Session.Alive then return end
+    Session.Alive = false
+    for _, connection in ipairs(Session.Connections) do connection:Disconnect() end
+    table.clear(Session.Connections)
+    Session:RestorePhysics()
+    pcall(function() RunService:Set3dRenderingEnabled(true) end)
+    if setfpscap then pcall(setfpscap, 60) end
+    if CurrentWindow then CurrentWindow:Destroy() end
+end
 
 -- Optional game data modules used by the smart forge / gear scanner.
 local BackpackData, OreHelper, WeaponHelper, ArmorHelper, EnchStoneHelper = nil, nil, nil, nil, nil
@@ -122,8 +152,8 @@ pcall(function()
         table.insert(Dynamic.Stages, k)
     end
     table.sort(Dynamic.Stages, function(a, b)
-        local n1 = tonumber(a:match("%d+")) or 0
-        local n2 = tonumber(b:match("%d+")) or 0
+        local n1 = tonumber(tostring(a):match("%d+")) or 0
+        local n2 = tonumber(tostring(b):match("%d+")) or 0
         return n1 < n2
     end)
 end)
@@ -140,7 +170,7 @@ local function getTargetStageId()
             local pd = ProfileData and ProfileData.GetTotalData and ProfileData.GetTotalData()
             maxPass = pd and pd.Stats and tonumber(pd.Stats.StagePass) or 0
         end)
-        local targetNum = math.clamp(maxPass + 1, 1, math.max(#Dynamic.Stages - 1, 30))
+        local targetNum = math.clamp(maxPass + 1, 1, math.max(#Dynamic.Stages - 1, 1))
         return "Stage_" .. tostring(targetNum), targetNum
     else
         local clean = selected:match("Stage_%d+") or selected
@@ -165,8 +195,8 @@ pcall(function()
         table.insert(Dynamic.Classes, k)
     end
     table.sort(Dynamic.Classes, function(a, b)
-        local n1 = tonumber(a:match("%d+")) or 0
-        local n2 = tonumber(b:match("%d+")) or 0
+        local n1 = tonumber(tostring(a):match("%d+")) or 0
+        local n2 = tonumber(tostring(b):match("%d+")) or 0
         return n1 < n2
     end)
 end)
@@ -201,7 +231,7 @@ local Locales = {
         -- Window & Meta
         WindowTitle = "ตีดาบไปกับเอเธอร์ริกซ์ฮับ",
         WindowSub   = "AETHERIX +1 LOOT A FORGE  /  PLAY MORE • WORK LESS",
-        VersionTag  = "v4.9.4 PRO",
+        VersionTag  = "v5.0 PRO",
         LangName    = "ไทย (Thai)",
 
         -- Tab Titles
@@ -434,7 +464,7 @@ local Locales = {
         -- Window & Meta
         WindowTitle = "AETHERIX +1 LOOT A FORGE",
         WindowSub   = "FORGE YOUR LOOT  /  PLAY MORE • WORK LESS",
-        VersionTag  = "v4.9.4 PRO",
+        VersionTag  = "v5.0 PRO",
         LangName    = "English (EN)",
 
         -- Tab Titles
@@ -813,26 +843,37 @@ local Stats = {
 -- Networking & Instance Helpers
 -- ─────────────────────────────────────────────────────────────
 local function getRemote(folder, name)
+    RemoteRoot = ReplicatedStorage:FindFirstChild("Remote")
     if not RemoteRoot then return nil end
-    local f = RemoteRoot:FindFirstChild(folder)
-    return f and f:FindFirstChild(name) or nil
+    -- Server channels and client bindables coexist in the current game.
+    for _, folderName in ipairs({ folder .. "_Server", folder }) do
+        local container = RemoteRoot:FindFirstChild(folderName)
+        local remote = container and container:FindFirstChild(name)
+        if remote and (remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction")) then
+            return remote
+        end
+    end
+    return nil
 end
 
 local function call(folder, name, ...)
+    if not Session.Alive then return nil, false end
     local r = getRemote(folder, name)
     if not r then
         if State.Debug then warn("[AETHERIX] Remote missing:", folder, name) end
-        return nil
+        return nil, false
     end
-    local args = { ... }
+    local args = table.pack(...)
     local ok, res = pcall(function()
         if r:IsA("RemoteFunction") then
-            return r:InvokeServer(unpack(args))
-        else
-            r:FireServer(unpack(args))
+            return r:InvokeServer(table.unpack(args, 1, args.n))
         end
+        r:FireServer(table.unpack(args, 1, args.n))
+        return true -- Sent only; RemoteEvents do not acknowledge a mutation.
     end)
-    return ok and res or nil
+    if not ok and State.Debug then warn("[AETHERIX] Remote failed:", folder, name, res) end
+    if ok then return res, true end
+    return nil, false
 end
 
 local function char() return LocalPlayer.Character end
@@ -944,7 +985,7 @@ local function executeForgeNow(forgeType, minOres)
             oreEntries[#oreEntries + 1] = { UUID = uuid, Count = count, Power = power }
         end
     end
-    if totalOres < 4 then return false, "Need at least 4 ores" end
+    if totalOres < minOres then return false, "Need at least " .. tostring(minOres) .. " ores" end
 
     local rotating = forgeType == "All"
     local slot = forgeType
@@ -1032,7 +1073,7 @@ local function autoEnchantEquippedGear()
     local usableStones = {}
     for uuid, item in pairs(bp) do
         if type(item) == "table" then
-            local isStone = item.Type == "EnchStone" or (item.ID and tostring(item.ID):find("Stone"))
+            local isStone = item.Type == "EnchStone"
             if isStone then
                 local gradeRank = getStoneGrade(item)
                 local skip = false
@@ -1122,14 +1163,15 @@ end
 
 local ActiveThreads = {}
 local function loop(flag, delay, fn)
+    if not Session.Alive then return end
     if ActiveThreads[flag] then return end
     ActiveThreads[flag] = true
     task.spawn(function()
-        while State[flag] do
+        while Session.Alive and State[flag] do
             local ok, err = pcall(fn)
             if not ok and State.Debug then warn("[AETHERIX Loop Error]:", flag, err) end
             local waitTime = type(delay) == "string" and State[delay] or delay
-            task.wait(math.max(waitTime or 0.1, 0.05))
+            task.wait(math.max(tonumber(waitTime) or 0.1, 0.05))
         end
         ActiveThreads[flag] = nil
     end)
@@ -1178,26 +1220,36 @@ end
 local ConfigFileName = "AETHERIX_Plus1LootForge.json"
 
 local function saveConfig()
-    if not writefile then return end
+    if not writefile then return false end
     local ok, encoded = pcall(function()
         return HttpService:JSONEncode(State)
     end)
     if ok and encoded then
-        writefile(ConfigFileName, encoded)
+        local written = pcall(writefile, ConfigFileName, encoded)
+        if not written then return false end
         if State.Debug then print("[AETHERIX] State successfully persisted to disk") end
+        return true
     end
+    return false
 end
 
 local function loadConfig()
-    if not (isfile and readfile and isfile(ConfigFileName)) then return false end
+    if not (isfile and readfile) then return false end
     local ok, decoded = pcall(function()
+        if not isfile(ConfigFileName) then return nil end
         return HttpService:JSONDecode(readfile(ConfigFileName))
     end)
     if ok and type(decoded) == "table" then
         for k, v in pairs(decoded) do
             if State[k] ~= nil and type(State[k]) == type(v) then
-                State[k] = v
+                if type(v) ~= "number" or (v == v and math.abs(v) < math.huge and v >= 0) then
+                    State[k] = v
+                end
             end
+        end
+        if State.Language ~= "TH" and State.Language ~= "EN" then State.Language = "TH" end
+        for flag, reg in pairs(LoopRegistry) do
+            if State[flag] then loop(flag, reg.delay, reg.fn) end
         end
         return true
     end
@@ -1545,6 +1597,7 @@ local BossSystem = {
     LastHPBall      = 0,
     BusyAt          = 0,       -- farm loops pause while this is fresh
     Hooked          = false,
+    Connections     = {},
     Target          = nil,
     TargetId        = "-",
     LastWorldTarget = nil,
@@ -1685,12 +1738,14 @@ local function enterWorldBoss()
 end
 
 local function hookWorldBossEvents()
-    if BossSystem.Hooked then return end
-    BossSystem.Hooked = true
+    if not Session.Alive then return end
     local function hook(name, fn)
         local r = getRemote("WorldBoss", name)
+        local old = BossSystem.Connections[name]
+        if old and old.Remote == r then return end
+        if old then old.Connection:Disconnect(); BossSystem.Connections[name] = nil end
         if r and r:IsA("RemoteEvent") then
-            pcall(function() r.OnClientEvent:Connect(fn) end)
+            BossSystem.Connections[name] = { Remote = r, Connection = Session:Connect(r.OnClientEvent, fn) }
         end
     end
     hook("BossWillSpawnRE", function()
@@ -1842,7 +1897,8 @@ local function runStageLoop(forced)
     if checkSafeEvacuate() then return end
 
     -- 1. Determine Target Stage (Handles "Auto Max" via ProfileData or manual selection)
-    local targetStageId, stageNum = getTargetStageId()
+    local targetStageId = getTargetStageId()
+    local stageConfirmed = false
     Stats.CurrentActivity = TF("StatusStageEnter", targetStageId)
     LocalPlayer:SetAttribute("StageID", targetStageId)
 
@@ -1865,6 +1921,7 @@ local function runStageLoop(forced)
                 pcall(function() claimedAllOreRE:FireServer() end)
             end
             Stats.LastStageClear = os.time()
+            stageConfirmed = true
         end
     end
 
@@ -1887,7 +1944,7 @@ local function runStageLoop(forced)
     if State.AutoClimbStages and not (State.SelectedStage and State.SelectedStage:find("Auto Max")) then
         local enemyFolder = workspace:FindFirstChild("EnemyFolder")
         local remainingEnemies = enemyFolder and #enemyFolder:GetChildren() or 0
-        if remainingEnemies == 0 then
+        if remainingEnemies == 0 and stageConfirmed then
             local currentIndex = table.find(Dynamic.Stages, State.SelectedStage) or 1
             if currentIndex < #Dynamic.Stages then
                 State.SelectedStage = Dynamic.Stages[currentIndex + 1]
@@ -2036,7 +2093,7 @@ local function runMaster247Engine()
         hasTickets = t and (tonumber(t.Number) or 0) > 0
     end)
 
-    if hasTickets and State.MasterDungeonTicket then
+    if LocalPlayer:GetAttribute("Dungeoning") or (hasTickets and State.MasterDungeonTicket) then
         -- ★ PRIMARY: Dungeon farm
         pcall(runDungeonLoop, true)
     else
@@ -2070,21 +2127,21 @@ local function runMaster247Engine()
     if State.UltraPrompt then pcall(runUltraPrompts) end
 
     -- 8. UPGRADE (background — every 3 s so it doesn't flood)
-    if State.MasterAutoUpgrade and (now - _masterUpgradeTick >= 3) then
+    if State.MasterAutoUpgrade and not ActiveThreads.AutoUpgrade and (now - _masterUpgradeTick >= 3) then
         _masterUpgradeTick = now
         pcall(function()
             if State.UpgradeType == "All in One" then
                 call("Upgrade", "UpgradeOnceRE", "Train")
                 call("Upgrade", "UpgradeOnceRE", "OrePack")
                 call("Upgrade", "UpgradeOnceRE", "Luck")
-            elseif State.AutoUpgrade then
+            else
                 call("Upgrade", "UpgradeOnceRE", State.UpgradeType)
             end
         end)
     end
 
     -- 9. FORGE — ONLY when ore count ≥ threshold (not every tick!)
-    if State.MasterAutoForgeWhenReady and State.AutoForge and (now - _masterForgeTick >= 2) then
+    if State.MasterAutoForgeWhenReady and not ActiveThreads.AutoForge and (now - _masterForgeTick >= 2) then
         _masterForgeTick = now
         pcall(function()
             -- Count ores first
@@ -2110,10 +2167,10 @@ local function runMaster247Engine()
     end
 
     -- 10. Equip best gear (periodic)
-    if State.AutoEquipBest then pcall(function() equipBestGearNow("All") end) end
+    if State.AutoEquipBest and not ActiveThreads.AutoEquipBest then pcall(function() equipBestGearNow("All") end) end
 
     -- 11. Auto Enchant equipped gear with safe grade filtering (every 4 s)
-    if State.AutoEnchant and (now - _masterEnchantTick >= (State.EnchantDelay or 2.0)) then
+    if State.AutoEnchant and not ActiveThreads.AutoEnchant and (now - _masterEnchantTick >= (State.EnchantDelay or 2.0)) then
         _masterEnchantTick = now
         pcall(autoEnchantEquippedGear)
     end
@@ -2187,12 +2244,27 @@ end
 local UI_IMAGE      = "https://i.postimg.cc/BbdNqW5g/a64070bdf0a63b4e7c0f6176e7e92bb5.jpg"
 local DISCORD_IMAGE = "rbxassetid://115578801000914"
 
-local AetherixUI = (function()
+local AetherixUI
+local WindUISource
+local UIPreferences = {}
+local function createAetherixUI()
     local Lib = {}
     local Players = game:GetService("Players")
 
     local okLoad, WindUI = pcall(function()
-        return loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+        local installed = ReplicatedStorage:FindFirstChild("AetherixWindUI")
+        if installed and installed:IsA("ModuleScript") then
+            -- WindUI creates its ScreenGuis on require; rebuilds need a fresh instance.
+            local copy = installed:Clone()
+            copy.Parent = installed.Parent
+            local ok, result = pcall(require, copy)
+            copy:Destroy()
+            if not ok then error(result) end
+            return result
+        end
+        assert(type(loadstring) == "function", "Install the pinned WindUI ModuleScript as ReplicatedStorage.AetherixWindUI")
+        WindUISource = WindUISource or game:HttpGet("https://github.com/Footagesus/WindUI/releases/download/1.6.66/main.lua")
+        return assert(loadstring(WindUISource))()
     end)
     if not okLoad or type(WindUI) ~= "table" then
         error("[AETHERIX] WindUI failed to load: " .. tostring(WindUI))
@@ -2253,11 +2325,39 @@ local AetherixUI = (function()
     addTheme("Willow Ember", acc("#7A2A0B", "#FF8A3D"), bgs("#0C0503", "#1A0A05", "#351709", "#7A2A0B"),
         out("#4A1D0A", "#E0742F", "#5A230C"), btn("#2E1206", "#8A3E14"))
 
-    pcall(function() WindUI:SetFont("rbxassetid://12187371840") end)
-    Lib.CurrentThemeName = "Willow Rose"
+    addTheme("Aetherix Obsidian", acc("#7C6CF2", "#C4B8FF"),
+        bgs("#0B0D14", "#111521", "#171C2B", "#242039"),
+        out("#353B51", "#7C6CF2", "#353B51"), btn("#23283A", "#383154"))
+
+    -- Published font-family assets take priority in Studio. File-capable runtimes
+    -- can register the versioned Google Fonts TTFs as local font families.
+    local function fontFamily(name, attribute, url, weight)
+        local published = ReplicatedStorage:GetAttribute(attribute)
+        if type(published) == "string" and published ~= "" then return published end
+        if not (writefile and getcustomasset) then return nil end
+        local ok, family = pcall(function()
+            local path = "AETHERIX_" .. name .. "_v1"
+            if not (isfile and isfile(path .. ".ttf")) then writefile(path .. ".ttf", game:HttpGet(url)) end
+            local face = getcustomasset(path .. ".ttf")
+            writefile(path .. ".json", HttpService:JSONEncode({ name = name, faces = {
+                { name = "Bold", weight = weight, style = "normal", assetId = face },
+            } }))
+            return getcustomasset(path .. ".json")
+        end)
+        return ok and family or nil
+    end
+    Lib.BodyFont = fontFamily("Inter", "AetherixInterFont",
+        "https://fonts.gstatic.com/s/inter/v20/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuGKYMZg.ttf", 600)
+    Lib.HeadingFont = fontFamily("Syne", "AetherixSyneFont",
+        "https://fonts.gstatic.com/s/syne/v24/8vIS7w4qzmVxsWxjBZRjr0FKM_3fvj6k.ttf", 700)
+    pcall(function() WindUI:SetFont(Lib.BodyFont or "rbxasset://fonts/families/SourceSansPro.json") end)
+    if not (Lib.BodyFont and Lib.HeadingFont) then
+        warn("[AETHERIX] Custom fonts unavailable; using Roblox fallback. See README font setup.")
+    end
+    Lib.CurrentThemeName = UIPreferences.Theme or "Aetherix Obsidian"
     pcall(function() WindUI:SetTheme(Lib.CurrentThemeName) end)
-    Lib.ToggleKeyName = "RightShift"
-    Lib.Silenced = false
+    Lib.ToggleKeyName = UIPreferences.ToggleKey or "RightShift"
+    Lib.Silenced = UIPreferences.Silenced or false
 
     function Lib:GetThemes()
         local t = {}
@@ -2284,12 +2384,23 @@ local AetherixUI = (function()
     end
 
     -- ── element adapter: keeps the old AETHERIX API, builds WindUI elements ──
+    local saveScheduled = false
     local function guard(cb)
         if type(cb) ~= "function" then return nil end
-        local armedAt = os.clock() + 0.5   -- ignore any init-time callback fired by the library itself
         return function(...)
-            if os.clock() < armedAt then return end
-            return cb(...)
+            if not Session.Alive then return end
+            local ok, err = pcall(cb, ...)
+            if ok and State.AutoSaveConfig and not saveScheduled then
+                saveScheduled = true
+                task.delay(0.3, function()
+                    saveScheduled = false
+                    if Session.Alive and State.AutoSaveConfig then saveConfig() end
+                end)
+            end
+            if not ok then
+                warn("[AETHERIX] UI action failed:", err)
+                notify("AETHERIX", State.Language == "TH" and "ทำรายการไม่สำเร็จ ดูรายละเอียดใน Console" or "Action failed; see console", "alert-triangle")
+            end
         end
     end
     local KindIcon = { Success = "check", Info = "info", Warning = "triangle-alert" }
@@ -2298,7 +2409,15 @@ local AetherixUI = (function()
         local A = {}
         local count = 0
         local function add(kind, cfg)
+            local callback = cfg.Callback
+            local creating = true
+            if callback then
+                cfg.Callback = function(...)
+                    if not creating then return callback(...) end
+                end
+            end
             local okE, el = pcall(function() return tab[kind](tab, cfg) end)
+            creating = false
             if not okE then
                 warn("[AETHERIX] UI " .. kind .. " failed: " .. tostring(el))
                 return {}
@@ -2324,7 +2443,7 @@ local AetherixUI = (function()
         function A:Button(c)
             return add("Button", {
                 Title = tostring(c.Title or ""), Desc = c.Desc or c.Description, Icon = c.Icon,
-                Justify = "Center", Callback = c.Callback,
+                Justify = "Left", Callback = guard(c.Callback),
             })
         end
         function A:Slider(c)
@@ -2340,12 +2459,12 @@ local AetherixUI = (function()
         function A:Dropdown(c)
             local vals = {}
             for _, v in ipairs(c.Values or {}) do vals[#vals + 1] = tostring(v) end
-            local cfg = { Title = tostring(c.Title or ""), Desc = c.Desc or c.Description, Values = vals, Callback = guard(c.Callback) }
+            local cfg = { Title = tostring(c.Title or ""), Desc = c.Desc or c.Description, Values = vals, SearchBarEnabled = true, AllowNone = true, Callback = guard(c.Callback) }
             if c.Value ~= nil and #vals > 0 then cfg.Value = tostring(c.Value) end
             local el = add("Dropdown", cfg)
             local obj = {}
             function obj:Set(v) pcall(function() el:Select(v) end) end
-            function obj:Refresh(nv) pcall(function() el:Refresh(nv) end) end
+            function obj:Refresh(nv) pcall(function() el:Select(nil); el:Refresh(nv) end) end
             return obj
         end
         function A:Input(c)
@@ -2382,26 +2501,30 @@ local AetherixUI = (function()
     -- ── window ──────────────────────────────────────────────────
     function Lib:CreateWindow(opts)
         opts = opts or {}
-        local rose1, rose2 = hex("#711E42"), hex("#E45B91")
+        local rose1, rose2 = hex("#7C6CF2"), hex("#C4B8FF")
+        local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(900, 650)
+        local compact = viewport.X < 700
+        local width, height = math.min(860, math.max(300, viewport.X - 24)), math.min(600, math.max(260, viewport.Y - 64))
         local openBtn = {
             Title = "AETHERIX HUB", Icon = UI_IMAGE, Enabled = true, Draggable = true, OnlyMobile = false,
             Scale = 0.92, StrokeThickness = 1, CornerRadius = UDim.new(1, 0),
             Color = ColorSequence.new(rose1, rose2),
         }
         local win = WindUI:CreateWindow({
-            Title = "AETHERIX HUB | +1 Loot To Forge",
+            Title = "AETHERIX HUB",
             Author = "made by AETHERIX",
             Folder = "AETHERIXConfig",
             Icon = UI_IMAGE,
             Theme = Lib.CurrentThemeName,
-            Acrylic = true,
-            Transparent = true,
-            Size = UDim2.fromOffset(700, 480),
-            MinSize = Vector2.new(580, 390),
+            Acrylic = not UserInputService.TouchEnabled,
+            Transparent = false,
+            Size = UDim2.fromOffset(width, height),
+            AutoScale = false,
+            MinSize = Vector2.new(300, 260),
             MaxSize = Vector2.new(1100, 760),
             Resizable = true,                       -- drag the window corner to resize
-            ToggleKey = Enum.KeyCode.RightShift,
-            SideBarWidth = 180,
+            ToggleKey = Enum.KeyCode[Lib.ToggleKeyName] or Enum.KeyCode.RightShift,
+            SideBarWidth = compact and 112 or 204,
             Radius = 14,
             ElementsRadius = 10,
             BackgroundImageTransparency = 0.5,
@@ -2410,16 +2533,47 @@ local AetherixUI = (function()
             HideSearchBar = false,
             ScrollBarEnabled = true,
             NewElements = true,
-            Topbar = { Height = 44, ButtonsType = "Mac" },
+            Topbar = { Height = 52, ButtonsType = "Mac" },
             OpenButton = openBtn,                   -- draggable open button
             User = { Enabled = true, Anonymous = false, Callback = function() end },
         })
-        pcall(function() win:SetBackgroundTransparency(0.5) end)
+        pcall(function() win:SetBackgroundTransparency(0.12) end)
         pcall(function() win:EditOpenButton(openBtn) end)
 
         local W = { Raw = win }
+        local viewConnections = {}
+        local main = win.UIElements and win.UIElements.Main
+        local function typography(object)
+            if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+                pcall(function()
+                    local heading = object.Name == "Title" or (object.Parent and object.Parent.Name == "Title")
+                    local family = heading and Lib.HeadingFont or Lib.BodyFont
+                    if family then object.FontFace = Font.new(family, heading and Enum.FontWeight.Bold or Enum.FontWeight.SemiBold) end
+                end)
+            end
+        end
+        if main then
+            for _, object in ipairs(main:GetDescendants()) do typography(object) end
+            table.insert(viewConnections, main.DescendantAdded:Connect(typography))
+        end
+        local cameraConnection
+        local function fitViewport()
+            if not workspace.CurrentCamera or win.Destroyed then return end
+            local size = workspace.CurrentCamera.ViewportSize
+            win:SetSize(UDim2.fromOffset(math.min(860, math.max(300, size.X - 24)), math.min(600, math.max(260, size.Y - 64))))
+            win:SetToTheCenter()
+        end
+        local function bindCamera()
+            if cameraConnection then cameraConnection:Disconnect() end
+            if workspace.CurrentCamera then
+                cameraConnection = workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitViewport)
+            end
+            fitViewport()
+        end
+        table.insert(viewConnections, workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(bindCamera))
+        bindCamera()
         local okV, vTag = pcall(function()
-            return win:Tag({ Title = tostring(opts.Version or "v4.9.4 PRO"), Icon = "badge-check", Color = rose2, Radius = 7 })
+            return win:Tag({ Title = tostring(opts.Version or "v5.0 PRO"), Icon = "badge-check", Color = rose2, Radius = 7 })
         end)
         local okF, fTag = pcall(function()
             return win:Tag({ Title = "FPS: --", Icon = "gauge", Color = rose1, Radius = 7 })
@@ -2431,6 +2585,8 @@ local AetherixUI = (function()
         local function fireClose()
             if closed then return end
             closed = true
+            for _, connection in ipairs(viewConnections) do connection:Disconnect() end
+            if cameraConnection then cameraConnection:Disconnect() end
             if not (Lib.IsRebuilding and Lib.IsRebuilding()) and type(opts.OnClose) == "function" then
                 pcall(opts.OnClose)
             end
@@ -2447,7 +2603,7 @@ local AetherixUI = (function()
             end)
         end)
         task.spawn(function()   -- fallback watcher in case the library has no OnDestroy callback
-            while not closed and not destroyed do
+            while Session.Alive and not closed and not destroyed do
                 task.wait(1)
                 local gone = false
                 pcall(function() gone = (win.Destroyed == true) end)
@@ -2494,25 +2650,234 @@ local AetherixUI = (function()
     end
 
     return Lib
+end
+
+-- Item catalog and authenticated server bridge. No client-side inventory mutation.
+local ItemManager = (function()
+    local M = { Catalog = {}, Status = "", Requests = {}, PendingGrant = nil }
+    local channel, listener
+    local function changed()
+        if M.OnChanged and Session.Alive then M.OnChanged() end
+    end
+    local function addEntry(catalog, seen, category, id, name, grantable, maxQuantity)
+        if type(id) ~= "string" and type(id) ~= "number" then return end
+        id = tostring(id)
+        local key = category .. ":" .. id
+        if seen[key] then return end
+        seen[key] = true
+        table.insert(catalog, { Key = key, Type = category, Id = id, Name = tostring(name or id),
+            Grantable = grantable == true, MaxQuantity = maxQuantity or 100 })
+    end
+    function M:Discover()
+        local catalog, seen = {}, {}
+        local config = ReplicatedStorage:FindFirstChild("Config")
+        -- Config data supplies display names; asset names fill gaps without
+        -- claiming to be a complete or grantable server catalog.
+        for _, category in ipairs({ "Weapon", "Armor", "Hat", "Ore", "EnchStone", "Material", "Potion", "Egg", "Pet", "Token" }) do
+            local folder = config and config:FindFirstChild(category)
+            if folder then
+                for _, moduleName in ipairs({ "Config", "EnchStoneConfig", "Show" }) do
+                    local module = folder:FindFirstChild(moduleName)
+                    if module and module:IsA("ModuleScript") then
+                        local ok, data = pcall(require, module)
+                        if ok and type(data) == "table" then
+                            for id, row in pairs(data) do
+                                if type(row) == "table" then
+                                    local itemId = row.ID or row.Id or id
+                                    local name = row.DisplayName or row.Name or itemId
+                                    if type(name) == "string" or type(name) == "number" then
+                                        addEntry(catalog, seen, category, itemId, name, false)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            local assets = ReplicatedStorage:FindFirstChild("Assets")
+            local models = assets and assets:FindFirstChild(category)
+            if models then
+                local function scan(parent)
+                    for _, child in ipairs(parent:GetChildren()) do
+                        if child:IsA("Model") or child:IsA("Tool") then
+                            addEntry(catalog, seen, category, child:GetAttribute("ID") or child.Name,
+                                child:GetAttribute("DisplayName") or child.Name, false)
+                        elseif child:IsA("Folder") then scan(child) end
+                    end
+                end
+                scan(models)
+            end
+        end
+        table.sort(catalog, function(a, b) return a.Key < b.Key end)
+        self.Catalog = catalog
+        self.Status = State.Language == "TH" and "รายการจากไคลเอนต์ • ยังไม่ยืนยันความครบถ้วนหรือสิทธิ์เพิ่ม" or "Client catalog • completeness and grant permission unconfirmed"
+    end
+    local function connect()
+        local folder = ReplicatedStorage:FindFirstChild("AetherixAdmin")
+        local remote = folder and folder:FindFirstChild("Inventory")
+        if not remote or not remote:IsA("RemoteEvent") then return nil end
+        if channel ~= remote then
+            if listener then listener:Disconnect() end
+            channel = remote
+            listener = Session:Connect(remote.OnClientEvent, function(response)
+                if type(response) ~= "table" then return end
+                local request = M.Requests[response.RequestId]
+                if not request then return end
+                M.Requests[response.RequestId] = nil
+                if request.Action == "Catalog" and response.Ok and type(response.Items) == "table" then
+                    local catalog, seen = {}, {}
+                    for _, row in ipairs(response.Items) do
+                        if type(row) == "table" and type(row.Type) == "string" then
+                            addEntry(catalog, seen, row.Type, row.Id, row.Name, true, row.MaxQuantity)
+                        end
+                    end
+                    table.sort(catalog, function(a, b) return a.Key < b.Key end)
+                    M.Catalog = catalog
+                elseif request.Action == "Grant" then
+                    M.PendingGrant = nil
+                    notify("Inventory", tostring(response.Message or ""), response.Ok and "check" or "alert-triangle")
+                end
+                M.Status = tostring(response.Message or (response.Ok and "Ready" or "Request rejected"))
+                changed()
+            end)
+        end
+        return remote
+    end
+    local function send(request)
+        local remote = connect()
+        if not remote then
+            M.Status = State.Language == "TH" and "ยังไม่ได้ติดตั้ง AetherixInventoryServer ในเกมนี้" or "AetherixInventoryServer is not installed in this game"
+            changed()
+            return false
+        end
+        M.Requests[request.RequestId] = request
+        request.SentAt = os.clock()
+        remote:FireServer({ RequestId = request.RequestId, Action = request.Action, Key = request.Key, Quantity = request.Quantity })
+        M.Status = State.Language == "TH" and "กำลังรอเซิร์ฟเวอร์…" or "Waiting for server…"
+        changed()
+        task.delay(12, function()
+            if not Session.Alive or M.Requests[request.RequestId] ~= request or os.clock() - request.SentAt < 11 then return end
+            if request.Action == "Catalog" then M.Requests[request.RequestId] = nil end
+            M.Status = State.Language == "TH" and "ยังไม่ได้รับผลยืนยัน • กดลองอีกครั้งด้วยคำขอเดิม" or "No confirmation yet • retry the same request"
+            changed()
+        end)
+        return true
+    end
+    function M:Refresh()
+        -- At most one catalog request at a time.
+        for _, request in pairs(self.Requests) do if request.Action == "Catalog" then return end end
+        self:Discover()
+        send({ Action = "Catalog", RequestId = HttpService:GenerateGUID(false) })
+    end
+    function M:Grant(entry, quantity)
+        if self.PendingGrant then
+            if os.clock() - self.PendingGrant.SentAt >= 12 then send(self.PendingGrant) end
+            return
+        end
+        if not entry or not entry.Grantable then
+            self.Status = State.Language == "TH" and "เลือกไอเท็มจากรายการที่เซิร์ฟเวอร์อนุญาตก่อน" or "Select an item from the authorized server catalog"
+            changed()
+            return
+        end
+        if not quantity or quantity ~= quantity or quantity % 1 ~= 0 or quantity < 1 or quantity > entry.MaxQuantity then
+            self.Status = (State.Language == "TH" and "จำนวนต้องเป็นเลขเต็ม 1–" or "Quantity must be a whole number from 1–") .. tostring(entry.MaxQuantity)
+            changed()
+            return
+        end
+        local request = { Action = "Grant", RequestId = HttpService:GenerateGUID(false), Key = entry.Key, Quantity = quantity }
+        self.PendingGrant = request
+        if not send(request) then self.PendingGrant = nil end
+    end
+    function M:Build(Window, group)
+        local isTH = State.Language == "TH"
+        local tab = Window:Tab({ Title = isTH and "จัดการไอเท็ม" or "Item Manager", Icon = "package", Group = group })
+        tab:Paragraph({ Title = "INVENTORY / AETHERIX", Desc = isTH
+            and "ค้นหาชื่อหรือ ID • เลือกจำนวน • เพิ่มให้ผู้เล่นที่เปิดเมนูนี้ เมื่อเซิร์ฟเวอร์อนุญาต"
+            or "Search names or IDs • Choose quantity • Grant to the current player with server authorization", Icon = "package" })
+        local status = tab:Paragraph({ Title = isTH and "การเชื่อมต่อ" or "Connection", Desc = self.Status })
+        local query, category, selected, quantity = "", "All", nil, 1
+        local page, pageSize = 1, 80
+        local byLabel, itemDropdown, categories
+        local lastCatalog
+        local function render()
+            if CurrentWindow ~= Window then return end
+            if lastCatalog ~= self.Catalog then
+                lastCatalog = self.Catalog
+                local values, seen = { "All" }, { All = true }
+                for _, row in ipairs(self.Catalog) do
+                    if not seen[row.Type] then table.insert(values, row.Type); seen[row.Type] = true end
+                end
+                category = "All"
+                categories:Refresh(values)
+            end
+            local matching = {}
+            for _, row in ipairs(self.Catalog) do
+                if (category == "All" or row.Type == category)
+                    and string.find(string.lower(row.Name .. " " .. row.Key), query, 1, true) then
+                    table.insert(matching, row)
+                end
+            end
+            local pages = math.max(1, math.ceil(#matching / pageSize))
+            page = math.clamp(page, 1, pages)
+            local values = {}
+            byLabel = {}
+            local previousKey = selected and selected.Key
+            selected = nil
+            local selectedLabel
+            for i = (page - 1) * pageSize + 1, math.min(page * pageSize, #matching) do
+                local row = matching[i]
+                local label = row.Name .. " [" .. row.Key .. "]"
+                byLabel[label] = row
+                if row.Key == previousKey then selected = row; selectedLabel = label end
+                table.insert(values, label)
+            end
+            if itemDropdown then itemDropdown:Refresh(values); if selectedLabel then itemDropdown:Set(selectedLabel) end end
+            status:SetDesc(self.Status .. "\n" .. tostring(#matching) .. (isTH and " รายการ • หน้า " or " items • Page ") .. page .. "/" .. pages)
+        end
+        tab:Input({ Title = isTH and "ค้นหาไอเท็ม" or "Search items", Placeholder = isTH and "ชื่อ / ID แล้วกด Enter" or "Name / ID, then Enter",
+            Callback = function(value) query = string.lower(tostring(value or "")); page = 1; render() end })
+        categories = tab:Dropdown({ Title = isTH and "ชนิดไอเท็ม" or "Item type", Values = { "All" }, Value = "All",
+            Callback = function(value) if value then category = value; page = 1; render() end end })
+        itemDropdown = tab:Dropdown({ Title = isTH and "เลือกไอเท็ม" or "Select item", Values = {},
+            Callback = function(value) selected = value and byLabel[value] or nil end })
+        tab:Button({ Title = isTH and "หน้าก่อนหน้า" or "Previous page", Callback = function() page -= 1; render() end })
+        tab:Button({ Title = isTH and "หน้าถัดไป" or "Next page", Callback = function() page += 1; render() end })
+        tab:Input({ Title = isTH and "จำนวน (เลขเต็ม)" or "Quantity (whole number)", Value = "1", Placeholder = "1–100",
+            Callback = function(value) quantity = tonumber(value) end })
+        tab:Button({ Title = isTH and "เพิ่มเข้ากระเป๋า / ลองคำขอเดิมอีกครั้ง" or "Grant item / Retry pending request", Icon = "plus",
+            Callback = function() self:Grant(selected, quantity) end })
+        tab:Button({ Title = isTH and "โหลดรายการใหม่" or "Refresh catalog", Icon = "refresh-cw", Callback = function() self:Refresh() end })
+        self.OnChanged = render
+        self:Refresh()
+    end
+    return M
 end)()
 
 local UIRebuilding = false
 local function loadUILibrary()
+    AetherixUI = AetherixUI or createAetherixUI()
     CurrentLibrary = AetherixUI
     AetherixUI.IsRebuilding = function() return UIRebuilding end
     return AetherixUI
 end
 
 BuildUI = function()
+    if UIRebuilding or not Session.Alive then return end
     if FpsConnection then
         pcall(function() FpsConnection:Disconnect() end)
         FpsConnection = nil
     end
     if CurrentWindow then
         UIRebuilding = true
+        if AetherixUI then
+            UIPreferences.Theme, UIPreferences.ToggleKey, UIPreferences.Silenced = AetherixUI.CurrentThemeName, AetherixUI.ToggleKeyName, AetherixUI.Silenced
+        end
         pcall(function() CurrentWindow:Destroy() end)
-        CurrentWindow = nil
+        CurrentWindow, CurrentLibrary, AetherixUI = nil, nil, nil
+        -- WindUI 1.6.66 destroys ScreenGuis and disconnects signals after 0.4 s.
+        task.wait(0.5)
         UIRebuilding = false
+        if not Session.Alive then return end
     end
 
     local Library = loadUILibrary()
@@ -2520,12 +2885,13 @@ BuildUI = function()
     local isTHWin = State.Language == "TH"
 
     local function closeAll()
+        Session.Destroy()
         for k, v in pairs(State) do
             if type(v) == "boolean" then State[k] = false end
         end
         pcall(function() RunService:Set3dRenderingEnabled(true) end)
         if MusicSound then pcall(function() MusicSound:Destroy() end) MusicSound = nil end
-        if CurrentWindow then CurrentWindow:Destroy() end
+        if FpsConnection then FpsConnection:Disconnect(); FpsConnection = nil end
     end
 
     local Window = Library:CreateWindow({
@@ -3675,14 +4041,14 @@ BuildUI = function()
         Callback = function(themeName) Window:SetTheme(themeName) end,
     })
     T10:Paragraph({
-        Title = "Willow Glass",
-        Desc  = isTHUI and "ทุกธีมใช้สไตล์กระจกโปร่งใสเหมือนกัน เปลี่ยนแค่สีหลัก" or "Every theme shares the same glass style, only the accent colours change",
+        Title = "Aetherix Obsidian",
+        Desc  = isTHUI and "Inter SemiBold / Syne Bold • ค้นหาฟังก์ชันด้านบน • ลากเพื่อย้ายหน้าต่าง" or "Inter SemiBold / Syne Bold • Search at the top • Drag to reposition",
         Icon  = "sparkles",
     })
 
     T10:Toggle({
         Title = T("Tgl_Transparency"),
-        Value = true,
+        Value = false,
         Callback = function(v) pcall(function() Window:ToggleTransparency(v) end) end,
     })
 
@@ -3772,7 +4138,7 @@ BuildUI = function()
                 isTH and "เชื่อมต่อระบบส่งข้อมูลสำเร็จพร้อมทำงานตลอด 24 ชั่วโมง" or "Communication link established successfully.",
                 {
                     { name = isTH and "ชื่อผู้เล่น" or "Player", value = LocalPlayer.Name, inline = true },
-                { name = isTH and "เวอร์ชันระบบ" or "Engine", value = "v4.9.4 PRO", inline = true },
+                { name = isTH and "เวอร์ชันระบบ" or "Engine", value = "v5.0 PRO", inline = true },
                 },
                 0x10B981
             )
@@ -3833,8 +4199,9 @@ BuildUI = function()
     T10:Button({
         Title = T("Btn_SaveConfig"),
         Callback = function()
-            saveConfig()
-            notify("Config", T("Notif_ConfigSaved"), "save")
+            local saved = saveConfig()
+            notify("Config", saved and T("Notif_ConfigSaved") or
+                (State.Language == "TH" and "บันทึกไม่ได้: runtime ไม่รองรับไฟล์หรือเขียนไม่สำเร็จ" or "Save failed: file access unavailable"), saved and "save" or "alert-triangle")
         end,
     })
 
@@ -3926,13 +4293,14 @@ BuildUI = function()
         end,
     })
 
+    ItemManager:Build(Window, GRP_MAIN)
     Window:SelectTab(1)
 end
 
 -- ─────────────────────────────────────────────────────────────
 -- Event Listeners & Hardware Simulation
 -- ─────────────────────────────────────────────────────────────
-LocalPlayer.CharacterAdded:Connect(function(c)
+Session:Connect(LocalPlayer.CharacterAdded, function(c)
     local h = c:WaitForChild("Humanoid", 8)
     if h then
         h.WalkSpeed = State.WalkSpeed
@@ -3945,25 +4313,29 @@ LocalPlayer.CharacterAdded:Connect(function(c)
     end
 end)
 
-UserInputService.JumpRequest:Connect(function()
+Session:Connect(UserInputService.JumpRequest, function()
     if State.InfJump then
         local h = hum()
         if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
     end
 end)
 
-RunService.Stepped:Connect(function()
+Session:Connect(RunService.Stepped, function()
     if State.Noclip and char() then
         for _, p in ipairs(char():GetDescendants()) do
-            if p:IsA("BasePart") then p.CanCollide = false end
+            if p:IsA("BasePart") then
+                if Session.RestoreCollision[p] == nil then Session.RestoreCollision[p] = p.CanCollide end
+                p.CanCollide = false
+            end
         end
     end
+    if not State.Noclip then Session:RestorePhysics() end
     if State.GodMode then
         maintainGodMode()
     end
 end)
 
-LocalPlayer.Idled:Connect(function()
+Session:Connect(LocalPlayer.Idled, function()
     if State.AntiAFK then
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new())
@@ -3971,7 +4343,7 @@ LocalPlayer.Idled:Connect(function()
 end)
 
 pcall(function()
-    GuiService.ErrorMessageChanged:Connect(function()
+    Session:Connect(GuiService.ErrorMessageChanged, function()
         if State.Master247 or State.AutoDungeon or State.AutoStage then
             task.wait(3)
             TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
@@ -3984,7 +4356,7 @@ end)
 -- ─────────────────────────────────────────────────────────────
 -- ★ MASTER ENGINE LOOP — tighter tick (0.15 s) for responsive farm loop
 task.spawn(function()
-    while true do
+    while Session.Alive do
         if State.Master247 then
             pcall(runMaster247Engine)
         end
@@ -3994,7 +4366,7 @@ end)
 
 -- Standalone dungeon/stage loops (when enabled independently without Master)
 task.spawn(function()
-    while true do
+    while Session.Alive do
         if not State.Master247 and os.clock() - BossSystem.BusyAt >= 1.5 then
             if State.AutoDungeon then pcall(runDungeonLoop) end
             if State.AutoStage   then pcall(runStageLoop)   end
@@ -4004,7 +4376,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while true do
+    while Session.Alive do
         pcall(function()
             local elapsed = os.time() - Stats.StartTime
             local h = math.floor(elapsed / 3600)
@@ -4101,7 +4473,8 @@ end)
 -- ─────────────────────────────────────────────────────────────
 local buildOk, buildErr = pcall(BuildUI)
 if not buildOk then
-    warn("[AETHERIX] UI build error (non-fatal):", tostring(buildErr):sub(1, 200))
+    warn("[AETHERIX] UI build error:", tostring(buildErr):sub(1, 200))
+    Session.Destroy()
 end
 
 -- Listen to world-boss events from launch so the spawn state is always tracked
@@ -4111,8 +4484,8 @@ pcall(hookWorldBossEvents)
 for flag, reg in pairs(LoopRegistry) do
     if State[flag] then loop(flag, reg.delay, reg.fn) end
 end
-notify(
+if buildOk then notify(
     "AETHERIX +1 LOOT A FORGE",
     State.Language == "TH" and "ระบบพร้อมแล้ว กด RightShift เพื่อซ่อนหรือเปิดหน้าต่าง UI" or "Interface ready. Press RightShift to toggle the window",
     "sparkles"
-)
+) end
