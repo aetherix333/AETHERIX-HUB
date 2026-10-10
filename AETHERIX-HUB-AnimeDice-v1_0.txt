@@ -1,0 +1,1557 @@
+--[[
+    AETHERIX HUB v1.0  —  [UPD 7] ลูกเต๋าอนิเมะ (Anime Dice)
+    PlaceId 113290951185459
+    เขียนใหม่ทั้งหมดจากโครงสร้างเกม (ReplicatedStorage.Network)
+
+    ระบบ "Learn Mode": เกมนี้ส่งค่า (argument) ให้ remote หลายตัว เช่น ซื้ออัปเกรด/ทอยเทรต
+    แต่ไฟล์ dump ไม่มีซอร์ส สคริปต์จึงจำค่าจริงที่เกมส่งตอนคุณกดเองหนึ่งครั้ง
+    แล้วเอามายิงซ้ำให้อัตโนมัติ (แท็บ "เรียนรู้ & ยิงซ้ำ")
+]]
+
+local HUB_NAME    = "AETHERIX HUB"
+local HUB_VERSION = "v1.0"
+local PLACE_ID    = 113290951185459
+
+if getgenv then
+    if getgenv().AETHERIX_ANIMEDICE_LOADED and getgenv().AETHERIX_ANIMEDICE_STOP then
+        pcall(getgenv().AETHERIX_ANIMEDICE_STOP)
+    end
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Services
+-- ─────────────────────────────────────────────────────────────
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local VirtualUser       = game:GetService("VirtualUser")
+local TeleportService   = game:GetService("TeleportService")
+local HttpService       = game:GetService("HttpService")
+
+local LocalPlayer = Players.LocalPlayer
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Network = ReplicatedStorage:WaitForChild("Network", 20)
+
+-- ─────────────────────────────────────────────────────────────
+-- State (+ save / load)
+-- ─────────────────────────────────────────────────────────────
+local State = {
+    -- roll
+    AutoRoll        = false,   -- เปิดระบบทอยออโต้ของเกม (RollService.SetAutoRoll)
+    ManualRoll      = false,   -- ทอยเองด้วย RollDice
+    RollDelay       = 0.6,
+    -- plot / economy
+    AutoCollect     = false,
+    CollectDelay    = 5,
+    AutoEquipBest   = false,
+    EquipBestDelay  = 30,
+    AutoRebirth     = false,   -- อันตราย: ไม่เปิดเองตอนโหลด
+    RebirthDelay    = 10,
+    AutoSell        = false,   -- อันตราย: ไม่เปิดเองตอนโหลด
+    SellDelay       = 15,
+    -- rewards
+    AutoRewards     = false,
+    RewardDelay     = 60,
+    AutoSpin        = false,
+    SpinDelay       = 10,
+    -- tower
+    AutoTower       = false,
+    AutoTowerTeam   = false,
+    TowerTeamDelay  = 60,
+    -- learn / replay
+    AutoReplay      = false,
+    ReplayKey       = "",
+    ReplayDelay     = 2,
+    -- utility
+    AntiAFK         = true,
+    SpeedEnabled    = false,
+    WalkSpeed       = 32,
+    FpsSaver        = false,
+    Debug           = false,
+}
+
+-- ธง "อันตราย" (ใช้ของ/ขายของ) จะไม่ถูกเปิดอัตโนมัติจากไฟล์เซฟ
+local DANGEROUS = { AutoRebirth = true, AutoSell = true, AutoReplay = true }
+
+local CONFIG_DIR  = "AETHERIX_HUB"
+local CONFIG_FILE = CONFIG_DIR .. "/AnimeDice_v1.json"
+local dirty = false
+
+local function saveConfig()
+    if not (writefile and makefolder) then return end
+    pcall(function()
+        if isfolder and not isfolder(CONFIG_DIR) then makefolder(CONFIG_DIR) end
+        writefile(CONFIG_FILE, HttpService:JSONEncode(State))
+    end)
+    dirty = false
+end
+
+local function loadConfig()
+    if not (readfile and isfile) then return end
+    pcall(function()
+        if not isfile(CONFIG_FILE) then return end
+        local data = HttpService:JSONDecode(readfile(CONFIG_FILE))
+        for k, v in pairs(data) do
+            if State[k] ~= nil and type(v) == type(State[k]) then
+                State[k] = v
+            end
+        end
+    end)
+    for k in pairs(DANGEROUS) do State[k] = false end
+end
+loadConfig()
+
+local function markDirty() dirty = true end
+
+local Stats = { Calls = 0, Errors = 0, Rolls = 0, Started = os.clock() }
+local function dbg(...)
+    if State.Debug then warn("[AETHERIX]", ...) end
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Network layer  (ReplicatedStorage.Network.<Service>.<RE|RF|RP>.<Name>)
+--   service = "" หมายถึง Network.RE / Network.RF โดยตรง (เช่น BuyUpgrade)
+-- ─────────────────────────────────────────────────────────────
+local RemoteCache = {}
+local function getRemote(service, name)
+    if not Network then return nil end
+    local key = service .. "." .. name
+    local hit = RemoteCache[key]
+    if hit and hit.Parent then return hit end
+    local root = (service == "") and Network or Network:FindFirstChild(service)
+    local found
+    if root then
+        for _, kind in ipairs({ "RE", "RF", "RP" }) do
+            local f = root:FindFirstChild(kind)
+            local r = f and f:FindFirstChild(name)
+            if r then found = r break end
+        end
+    end
+    RemoteCache[key] = found
+    return found
+end
+
+local function send(service, name, ...)
+    local r = getRemote(service, name)
+    if not r then
+        Stats.Errors = Stats.Errors + 1
+        dbg("remote not found:", service, name)
+        return false
+    end
+    local args = table.pack(...)
+    Stats.Calls = Stats.Calls + 1
+    if r:IsA("RemoteEvent") then
+        local ok, err = pcall(function() r:FireServer(table.unpack(args, 1, args.n)) end)
+        if not ok then Stats.Errors = Stats.Errors + 1 dbg(err) end
+        return ok
+    elseif r:IsA("RemoteFunction") then
+        local ok, res = pcall(function() return r:InvokeServer(table.unpack(args, 1, args.n)) end)
+        if not ok then Stats.Errors = Stats.Errors + 1 dbg(res) return false end
+        return true, res
+    end
+    return false
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Learn Mode: จำ argument จริงที่เกมส่งตอนผู้เล่นกดเอง
+-- ─────────────────────────────────────────────────────────────
+local Learned, LearnOrder = {}, {}
+local LearnLog = {}
+local LearnStatus = "ยังไม่เริ่ม"
+local LearnHooked = false
+
+local IGNORE_REMOTE = { Data = true, Cache = true, Stock = true, ActiveWeather = true, EquippedUnit = true, PlotId = true }
+
+local function keyOf(remote)
+    local svc = remote.Parent and remote.Parent.Parent
+    local sname = (svc and svc ~= Network) and svc.Name or "Network"
+    return sname .. "." .. remote.Name, (svc and svc ~= Network) and svc.Name or ""
+end
+
+local function describeArg(v)
+    local t = typeof(v)
+    if t == "string" then return '"' .. v:sub(1, 24) .. '"' end
+    if t == "Instance" then return "<" .. v.ClassName .. ":" .. v.Name .. ">" end
+    if t == "table" then return "{table}" end
+    return tostring(v)
+end
+
+local function record(remote, args, method)
+    local key, svcName = keyOf(remote)
+    local entry = Learned[key]
+    if not entry then
+        entry = { remote = remote, service = svcName, name = remote.Name, count = 0 }
+        Learned[key] = entry
+        LearnOrder[#LearnOrder + 1] = key
+        table.sort(LearnOrder)
+    end
+    entry.args = args
+    entry.count = entry.count + 1
+    entry.time = os.clock()
+    local parts = {}
+    for i = 1, math.min(args.n, 5) do parts[#parts + 1] = describeArg(args[i]) end
+    table.insert(LearnLog, 1, ("%s(%s)"):format(key, table.concat(parts, ", ")))
+    if #LearnLog > 8 then table.remove(LearnLog) end
+end
+
+local function installLearner()
+    if LearnHooked then return true end
+    if not (hookmetamethod and getnamecallmethod) then
+        LearnStatus = "executor ไม่รองรับ hookmetamethod"
+        return false
+    end
+    local old
+    local function handler(self, ...)
+        local m = getnamecallmethod()
+        if (m == "FireServer" or m == "InvokeServer") and typeof(self) == "Instance"
+            and not (checkcaller and checkcaller()) then
+            local args = table.pack(...)
+            pcall(function()
+                if Network and self:IsDescendantOf(Network) and not IGNORE_REMOTE[self.Name] then
+                    record(self, args, m)
+                end
+            end)
+        end
+        return old(self, ...)
+    end
+    local ok = pcall(function()
+        old = hookmetamethod(game, "__namecall", newcclosure and newcclosure(handler) or handler)
+    end)
+    if ok and old then
+        LearnHooked = true
+        LearnStatus = "กำลังจำค่า (กดในเกมได้เลย)"
+        return true
+    end
+    LearnStatus = "ติดตั้ง hook ไม่สำเร็จ"
+    return false
+end
+
+local function replay(key)
+    local e = Learned[key]
+    if not (e and e.remote and e.remote.Parent) then return false end
+    local args = e.args or table.pack()
+    Stats.Calls = Stats.Calls + 1
+    local r = e.remote
+    if r:IsA("RemoteEvent") then
+        return pcall(function() r:FireServer(table.unpack(args, 1, args.n)) end)
+    elseif r:IsA("RemoteFunction") then
+        return pcall(function() return r:InvokeServer(table.unpack(args, 1, args.n)) end)
+    end
+    return false
+end
+
+-- ใช้ค่าที่เรียนรู้ไว้ ถ้ายังไม่เคยเรียนรู้ ค่อยยิงแบบไม่มี argument
+local function sendSmart(service, name, ...)
+    local key = (service == "" and "Network" or service) .. "." .. name
+    if Learned[key] then return replay(key) end
+    return send(service, name, ...)
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Loop manager
+-- ─────────────────────────────────────────────────────────────
+local Loops = {}
+local Alive = true
+local function startLoop(flag, getDelay, fn)
+    if Loops[flag] then return end
+    local token = {}
+    Loops[flag] = token
+    task.spawn(function()
+        while Alive and Loops[flag] == token and State[flag] do
+            local ok, err = pcall(fn)
+            if not ok then Stats.Errors = Stats.Errors + 1 dbg(flag, err) end
+            task.wait(math.max(0.1, tonumber(getDelay()) or 1))
+        end
+        if Loops[flag] == token then Loops[flag] = nil end
+    end)
+end
+
+local function setLoop(flag, v, getDelay, fn)
+    State[flag] = v and true or false
+    markDirty()
+    if v then startLoop(flag, getDelay, fn) else Loops[flag] = nil end
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Features
+-- ─────────────────────────────────────────────────────────────
+local function doAutoRollAssert()
+    send("RollService", "SetAutoRoll", true)
+end
+
+local function doManualRoll()
+    local ok = sendSmart("RollService", "RollDice")
+    if ok then Stats.Rolls = Stats.Rolls + 1 end
+end
+
+local function doCollect()     sendSmart("PlotService", "CollectBalance") end
+local function doEquipBest()   sendSmart("PlotService", "EquipBest") end
+local function doRebirth()     sendSmart("RebirthService", "Rebirth") end
+local function doSell()        sendSmart("SellService", "SellInventory") end
+
+local function doRewards()
+    sendSmart("DailyRewardService", "Claim")
+    sendSmart("OfflineEarningsService", "Claim")
+    sendSmart("GroupRewardService", "Claim")
+    sendSmart("QuestService", "Claim")
+end
+
+local function doSpin()        sendSmart("SpinService", "Use") end
+local function doTowerTeam()   sendSmart("Towers", "EquipBestTowerTeam") end
+
+local function doReplay()
+    if State.ReplayKey ~= "" then replay(State.ReplayKey) end
+end
+
+local function redeemCodes(text)
+    local n = 0
+    for code in tostring(text):gmatch("[^%s,;]+") do
+        send("CodesService", "RedeemCode", code)
+        n = n + 1
+        task.wait(0.4)
+    end
+    return n
+end
+
+-- WalkSpeed / FPS / Anti-AFK
+local function applySpeed()
+    local ch = LocalPlayer.Character
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if hum and State.SpeedEnabled then hum.WalkSpeed = State.WalkSpeed end
+end
+
+local antiAfkConn
+local function setAntiAFK(v)
+    State.AntiAFK = v
+    markDirty()
+    if antiAfkConn then antiAfkConn:Disconnect() antiAfkConn = nil end
+    if v then
+        antiAfkConn = LocalPlayer.Idled:Connect(function()
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new())
+            end)
+        end)
+    end
+end
+
+local function setFpsSaver(v)
+    State.FpsSaver = v
+    markDirty()
+    pcall(function() RunService:Set3dRenderingEnabled(not v) end)
+end
+
+local function rejoin()
+    pcall(function()
+        if #Players:GetPlayers() <= 1 then
+            LocalPlayer:Kick("\nAETHERIX: กำลังเข้าเซิร์ฟเวอร์ใหม่...")
+            task.wait()
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        else
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        end
+    end)
+end
+
+-- ═════════════════════════════════════════════════════════════
+local AetherixUI = (function()
+    local Lib = {}
+    local Players = game:GetService("Players")
+    local TweenService = game:GetService("TweenService")
+    local UIS = game:GetService("UserInputService")
+    local RunService = game:GetService("RunService")
+    local CoreGui = game:GetService("CoreGui")
+    local StatsService = game:GetService("Stats")
+    local LocalPlayer = Players.LocalPlayer
+
+    -- ── Palette / themes ────────────────────────────────────────
+    local C = {
+        Bg      = Color3.fromRGB(17, 17, 17),
+        Side    = Color3.fromRGB(21, 21, 21),
+        Card    = Color3.fromRGB(27, 27, 27),
+        Elem    = Color3.fromRGB(36, 36, 36),
+        ElemHi  = Color3.fromRGB(52, 52, 52),
+        Stroke  = Color3.fromRGB(44, 44, 44),
+        Text    = Color3.fromRGB(255, 255, 255),
+        Sub     = Color3.fromRGB(150, 150, 150),
+        Accent  = Color3.fromRGB(60, 214, 72),
+    }
+    local Themes = {
+        ["Aetherix Green"] = Color3.fromRGB(60, 214, 72),
+        ["Willow Rose"]    = Color3.fromRGB(228, 91, 145),
+        ["Ocean Blue"]     = Color3.fromRGB(59, 156, 255),
+        ["Royal Violet"]   = Color3.fromRGB(155, 107, 255),
+        ["Sunset Gold"]    = Color3.fromRGB(245, 184, 61),
+        ["Crimson"]        = Color3.fromRGB(235, 64, 82),
+    }
+    Lib.CurrentThemeName = "Aetherix Green"
+
+    local accentList, hooks = {}, {}
+    local function accent(obj, prop)
+        obj[prop] = C.Accent
+        accentList[#accentList + 1] = { obj, prop }
+    end
+    local function onTheme(fn) hooks[#hooks + 1] = fn end
+
+    function Lib:GetThemes() return Themes end
+    function Lib:SetTheme(name)
+        local col = Themes[name]
+        if not col then return false end
+        C.Accent = col
+        Lib.CurrentThemeName = name
+        for _, e in ipairs(accentList) do
+            pcall(function() e[1][e[2]] = col end)
+        end
+        for _, fn in ipairs(hooks) do pcall(fn) end
+        return true
+    end
+
+    -- ── Helpers ─────────────────────────────────────────────────
+    local FONT_REG  = Enum.Font.Gotham
+    local FONT_MED  = Enum.Font.GothamMedium
+    local FONT_BOLD = Enum.Font.GothamBold
+
+    local function new(class, props)
+        local o = Instance.new(class)
+        local parent
+        for k, v in pairs(props or {}) do
+            if k == "Parent" then parent = v else o[k] = v end
+        end
+        if parent then o.Parent = parent end
+        return o
+    end
+    local function corner(o, r)
+        return new("UICorner", { CornerRadius = UDim.new(0, r), Parent = o })
+    end
+    local function stroke(o, color, thick, trans)
+        return new("UIStroke", {
+            Color = color or C.Stroke, Thickness = thick or 1, Transparency = trans or 0,
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = o,
+        })
+    end
+    local function padding(o, l, t, r, b)
+        return new("UIPadding", {
+            PaddingLeft = UDim.new(0, l), PaddingTop = UDim.new(0, t),
+            PaddingRight = UDim.new(0, r or l), PaddingBottom = UDim.new(0, b or t), Parent = o,
+        })
+    end
+    local function vlist(o, gap)
+        return new("UIListLayout", {
+            Padding = UDim.new(0, gap or 0), SortOrder = Enum.SortOrder.LayoutOrder,
+            FillDirection = Enum.FillDirection.Vertical, Parent = o,
+        })
+    end
+    local function label(parent, text, size, font, color, props)
+        local l = new("TextLabel", {
+            BackgroundTransparency = 1, Text = text or "", TextSize = size or 14, Font = font or FONT_MED,
+            TextColor3 = color or C.Text, TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Center, Parent = parent,
+        })
+        for k, v in pairs(props or {}) do l[k] = v end
+        return l
+    end
+    local function tween(o, t, props)
+        pcall(function() TweenService:Create(o, TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play() end)
+    end
+    local function isPointer(input)
+        return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
+    end
+    local function isMove(input)
+        return input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch
+    end
+
+    -- icons: lucide-like names -> emoji (no asset downloads needed)
+    local ICONS = {
+        home = "🏠", ["layout-dashboard"] = "📊", gem = "💎", swords = "⚔️", crosshair = "🎯",
+        zap = "⚡", hammer = "🔨", sparkles = "✨", gift = "🎁", ["map-pin"] = "📍",
+        settings = "⚙️", music = "🎵", sword = "🗡️", eye = "👁️", star = "⭐",
+    }
+
+    local imageCache = {}
+    local function resolveImage(src)
+        if type(src) ~= "string" or src == "" then return nil end
+        if src:find("^rbxasset") then return src end
+        if src:find("^https?://") then
+            if imageCache[src] then return imageCache[src] end
+            local ok, asset = pcall(function()
+                local data = game:HttpGet(src)
+                local file = "AETHERIX_logo_" .. tostring(#src) .. ".png"
+                writefile(file, data)
+                return getcustomasset(file)
+            end)
+            if ok and asset then imageCache[src] = asset return asset end
+        end
+        return nil
+    end
+
+    local function guiParent()
+        local ok, h = pcall(function() return gethui and gethui() end)
+        if ok and h then return h end
+        local ok2 = pcall(function() return CoreGui.Name end)
+        if ok2 then return CoreGui end
+        return LocalPlayer:WaitForChild("PlayerGui")
+    end
+
+    local toastHolder
+
+    -- ── Notifications ───────────────────────────────────────────
+    function Lib:Notify(o)
+        if not toastHolder or not toastHolder.Parent then return end
+        o = o or {}
+        local card = new("Frame", {
+            BackgroundColor3 = C.Card, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            BorderSizePixel = 0, Parent = toastHolder,
+        })
+        corner(card, 8)
+        stroke(card, C.Stroke, 1)
+        local bar = new("Frame", { Size = UDim2.new(0, 3, 1, -12), Position = UDim2.new(0, 6, 0, 6), BorderSizePixel = 0, Parent = card })
+        accent(bar, "BackgroundColor3")
+        corner(bar, 2)
+        local holder = new("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 18, 0, 0), Size = UDim2.new(1, -28, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = card })
+        padding(holder, 0, 8, 0, 8)
+        vlist(holder, 2)
+        label(holder, tostring(o.Title or ""), 14, FONT_BOLD, C.Text, { Size = UDim2.new(1, 0, 0, 16), TextTruncate = Enum.TextTruncate.AtEnd })
+        label(holder, tostring(o.Content or ""), 12, FONT_REG, C.Sub, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
+        task.delay(tonumber(o.Duration) or 3, function()
+            if card and card.Parent then
+                tween(card, 0.3, { BackgroundTransparency = 1 })
+                task.wait(0.3)
+                pcall(function() card:Destroy() end)
+            end
+        end)
+    end
+
+    -- ── Window ──────────────────────────────────────────────────
+    function Lib:CreateWindow(opts)
+        opts = opts or {}
+        local Window = {}
+        local conns, tabs = {}, {}
+        local activeTab
+        local lastGroup
+        local allElements = {}
+        local function track(c) conns[#conns + 1] = c return c end
+
+        local parent = guiParent()
+        pcall(function()
+            for _, child in ipairs(parent:GetChildren()) do
+                if child.Name:find("^AETHERIX_UI") then child:Destroy() end
+            end
+        end)
+
+        local gui = new("ScreenGui", {
+            Name = "AETHERIX_UI_" .. tostring(math.random(1000, 9999)), ResetOnSpawn = false,
+            ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 1000, IgnoreGuiInset = true,
+        })
+        pcall(function() if syn and syn.protect_gui then syn.protect_gui(gui) end end)
+        gui.Parent = parent
+
+        local camera = workspace.CurrentCamera
+        local function viewport() return (camera and camera.ViewportSize) or Vector2.new(1280, 720) end
+
+        local function calcScale()
+            local vp = viewport()
+            return math.clamp(math.min(vp.X / 780, vp.Y / 560), 0.55, 1)
+        end
+        local scale = calcScale()
+
+        local DEF_W, DEF_H = 700, 470
+        local logoSrc = resolveImage(opts.Logo)
+
+        local function makeLogo(parentObj, size)
+            if logoSrc then
+                return new("ImageLabel", { BackgroundTransparency = 1, Image = logoSrc, Size = UDim2.fromOffset(size, size), ScaleType = Enum.ScaleType.Fit, Parent = parentObj })
+            end
+            local l = label(parentObj, "A", math.floor(size * 0.8), FONT_BOLD, C.Accent, { Size = UDim2.fromOffset(size, size), TextXAlignment = Enum.TextXAlignment.Center })
+            accent(l, "TextColor3")
+            return l
+        end
+
+        -- toast stack
+        toastHolder = new("Frame", {
+            BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 76),
+            Size = UDim2.new(0, 270, 1, -90), Parent = gui,
+        })
+        vlist(toastHolder, 6)
+
+        -- floating logo + status bar
+        local logoBtn = new("TextButton", {
+            Text = "", AutoButtonColor = false, BackgroundColor3 = Color3.fromRGB(14, 14, 14), AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 0, 6), Size = UDim2.fromOffset(52, 52), BorderSizePixel = 0, Parent = gui,
+        })
+        corner(logoBtn, 10)
+        stroke(logoBtn, C.Stroke, 1)
+        local lg = makeLogo(logoBtn, 34)
+        lg.AnchorPoint = Vector2.new(0.5, 0.5)
+        lg.Position = UDim2.fromScale(0.5, 0.5)
+
+        local statusBar = new("Frame", {
+            BackgroundColor3 = Color3.fromRGB(14, 14, 14), AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 0, 62), Size = UDim2.fromOffset(330, 22), BorderSizePixel = 0, Parent = gui,
+        })
+        corner(statusBar, 5)
+        local sbLine = new("Frame", { Size = UDim2.new(1, 0, 0, 2), BorderSizePixel = 0, Parent = statusBar })
+        accent(sbLine, "BackgroundColor3")
+        local statusLabel = label(statusBar, "", 12, FONT_BOLD, C.Text, {
+            Size = UDim2.new(1, 0, 1, 0), Position = UDim2.fromOffset(0, 1), TextXAlignment = Enum.TextXAlignment.Center,
+        })
+
+        -- main window
+        local main = new("Frame", {
+            Name = "Main", BackgroundColor3 = C.Bg, BorderSizePixel = 0, ClipsDescendants = true,
+            Size = UDim2.fromOffset(DEF_W, DEF_H), Parent = gui,
+        })
+        corner(main, 10)
+        stroke(main, C.Stroke, 1)
+        local uiScale = new("UIScale", { Scale = scale, Parent = main })
+        do
+            local vp = viewport()
+            local x = (vp.X - DEF_W * scale) / 2
+            local y = math.max(90, 90 + ((vp.Y - 90) - DEF_H * scale) / 2)
+            main.Position = UDim2.fromOffset(x, y)
+        end
+
+        -- sidebar
+        local side = new("Frame", { BackgroundColor3 = C.Side, BorderSizePixel = 0, Size = UDim2.new(0, 210, 1, 0), Parent = main })
+        local sideLine = new("Frame", { BackgroundColor3 = C.Stroke, BorderSizePixel = 0, Position = UDim2.new(1, -1, 0, 0), Size = UDim2.new(0, 1, 1, 0), Parent = side })
+
+        local header = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 56), Parent = side })
+        local hLogo = makeLogo(header, 28)
+        hLogo.Position = UDim2.fromOffset(16, 14)
+        local hTitle = label(header, tostring(opts.Title or "AETHERIX"), 20, FONT_BOLD, C.Accent, { Position = UDim2.fromOffset(52, 7), Size = UDim2.new(1, -60, 0, 24) })
+        accent(hTitle, "TextColor3")
+        label(header, tostring(opts.Version or ""), 12, FONT_REG, C.Sub, { Position = UDim2.fromOffset(52, 30), Size = UDim2.new(1, -60, 0, 14) })
+
+        local search = new("TextBox", {
+            BackgroundColor3 = C.Elem, Position = UDim2.fromOffset(12, 62), Size = UDim2.new(1, -24, 0, 34),
+            PlaceholderText = "Search...", PlaceholderColor3 = C.Sub, Text = "", TextColor3 = C.Text,
+            TextSize = 14, Font = FONT_MED, ClearTextOnFocus = false, BorderSizePixel = 0, Parent = side,
+        })
+        corner(search, 6)
+        stroke(search, C.Stroke, 1)
+
+        local tabList = new("ScrollingFrame", {
+            BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 106),
+            Size = UDim2.new(1, 0, 1, -184), ScrollBarThickness = 2, CanvasSize = UDim2.new(),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = side,
+        })
+        accent(tabList, "ScrollBarImageColor3")
+        vlist(tabList, 2)
+        padding(tabList, 0, 2, 0, 2)
+
+        -- profile card
+        local prof = new("Frame", {
+            BackgroundColor3 = C.Elem, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 10, 1, -10),
+            Size = UDim2.new(1, -20, 0, 58), BorderSizePixel = 0, Parent = side,
+        })
+        corner(prof, 8)
+        stroke(prof, C.Stroke, 1)
+        local avatar = new("ImageLabel", { BackgroundColor3 = C.ElemHi, Position = UDim2.fromOffset(8, 10), Size = UDim2.fromOffset(38, 38), BorderSizePixel = 0, Parent = prof })
+        corner(avatar, 19)
+        task.spawn(function()
+            local ok, img = pcall(function()
+                return Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+            end)
+            if ok and img and avatar.Parent then avatar.Image = img end
+        end)
+        label(prof, LocalPlayer.DisplayName, 14, FONT_BOLD, C.Text, { Position = UDim2.fromOffset(54, 7), Size = UDim2.new(1, -60, 0, 16), TextTruncate = Enum.TextTruncate.AtEnd })
+        label(prof, "@" .. LocalPlayer.Name, 11, FONT_REG, C.Sub, { Position = UDim2.fromOffset(54, 24), Size = UDim2.new(1, -60, 0, 13), TextTruncate = Enum.TextTruncate.AtEnd })
+        label(prof, "ID: " .. tostring(LocalPlayer.UserId), 10, FONT_REG, C.Sub, { Position = UDim2.fromOffset(54, 37), Size = UDim2.new(1, -60, 0, 13), TextTruncate = Enum.TextTruncate.AtEnd })
+
+        -- body
+        local body = new("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(218, 8), Size = UDim2.new(1, -226, 1, -16), Parent = main })
+
+        local topbar = new("Frame", { BackgroundColor3 = C.Card, Size = UDim2.new(1, -148, 0, 40), BorderSizePixel = 0, Parent = body })
+        corner(topbar, 8)
+        local pill = new("TextLabel", {
+            BackgroundColor3 = C.Accent, Position = UDim2.fromOffset(5, 5), Size = UDim2.new(0, 0, 1, -10),
+            AutomaticSize = Enum.AutomaticSize.X, Text = "", TextColor3 = Color3.fromRGB(255, 255, 255),
+            TextSize = 14, Font = FONT_BOLD, BorderSizePixel = 0, Parent = topbar,
+        })
+        accent(pill, "BackgroundColor3")
+        corner(pill, 6)
+        padding(pill, 14, 0, 14, 0)
+
+        local btnBox = new("Frame", { BackgroundColor3 = C.Card, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(140, 40), BorderSizePixel = 0, Parent = body })
+        corner(btnBox, 8)
+        local function topBtn(text, x, cb)
+            local b = new("TextButton", {
+                BackgroundTransparency = 1, Text = text, TextColor3 = C.Sub, TextSize = 15, Font = FONT_BOLD,
+                Position = UDim2.fromOffset(x, 0), Size = UDim2.fromOffset(34, 40), AutoButtonColor = false, Parent = btnBox,
+            })
+            b.MouseEnter:Connect(function() tween(b, 0.12, { TextColor3 = C.Text }) end)
+            b.MouseLeave:Connect(function() tween(b, 0.12, { TextColor3 = C.Sub }) end)
+            b.MouseButton1Click:Connect(function() pcall(cb) end)
+            return b
+        end
+
+        local content = new("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 48), Size = UDim2.new(1, 0, 1, -48), Parent = body })
+
+        -- resize grip
+        local grip = new("TextButton", {
+            Text = "", BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, 0, 1, 0),
+            Size = UDim2.fromOffset(22, 22), ZIndex = 5, Parent = main,
+        })
+        for i, w in ipairs({ 14, 8 }) do
+            local ln = new("Frame", {
+                BackgroundColor3 = C.Sub, BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5), Rotation = -45,
+                Position = UDim2.new(1, -9 + (i == 2 and 2 or 0), 1, -9 + (i == 2 and 2 or 0)), Size = UDim2.fromOffset(w, 2), ZIndex = 5, Parent = grip,
+            })
+        end
+
+        -- ── window behaviour ────────────────────────────────────
+        local function drag(handle)
+            local dragging, startIn, startPos
+            handle.InputBegan:Connect(function(input)
+                if isPointer(input) then
+                    dragging, startIn, startPos = true, input.Position, main.Position
+                    input.Changed:Connect(function()
+                        if input.UserInputState == Enum.UserInputState.End then dragging = false end
+                    end)
+                end
+            end)
+            track(UIS.InputChanged:Connect(function(input)
+                if dragging and isMove(input) then
+                    local d = input.Position - startIn
+                    main.Position = UDim2.fromOffset(startPos.X.Offset + d.X, startPos.Y.Offset + d.Y)
+                end
+            end))
+        end
+        drag(topbar)
+        drag(header)
+
+        do -- resize
+            local resizing, startIn, startSize
+            grip.InputBegan:Connect(function(input)
+                if isPointer(input) then
+                    resizing, startIn, startSize = true, input.Position, main.Size
+                    input.Changed:Connect(function()
+                        if input.UserInputState == Enum.UserInputState.End then resizing = false end
+                    end)
+                end
+            end)
+            track(UIS.InputChanged:Connect(function(input)
+                if resizing and isMove(input) then
+                    local d = (input.Position - startIn) / uiScale.Scale
+                    local vp = viewport()
+                    local w = math.clamp(startSize.X.Offset + d.X, 540, math.max(540, vp.X / uiScale.Scale - 10))
+                    local h = math.clamp(startSize.Y.Offset + d.Y, 360, math.max(360, vp.Y / uiScale.Scale - 10))
+                    main.Size = UDim2.fromOffset(w, h)
+                end
+            end))
+        end
+
+        function Window:Toggle()
+            main.Visible = not main.Visible
+        end
+        logoBtn.MouseButton1Click:Connect(function() Window:Toggle() end)
+
+        local maximized, prevSize, prevPos = false, nil, nil
+        local function toggleMax()
+            local vp = viewport()
+            if not maximized then
+                prevSize, prevPos = main.Size, main.Position
+                local s = uiScale.Scale
+                main.Size = UDim2.fromOffset(vp.X / s - 20, (vp.Y - 100) / s)
+                main.Position = UDim2.fromOffset(10, 90)
+                maximized = true
+            else
+                main.Size, main.Position = prevSize, prevPos
+                maximized = false
+            end
+        end
+
+        topBtn("🔗", 0, function()
+            if opts.Discord and opts.Discord ~= "" then
+                pcall(function() setclipboard(opts.Discord) end)
+                Lib:Notify({ Title = "AETHERIX", Content = "Link copied", Duration = 2 })
+            else
+                Lib:Notify({ Title = "AETHERIX", Content = "No link set (AETHERIX_DISCORD)", Duration = 2 })
+            end
+        end)
+        topBtn("□", 34, toggleMax)
+        topBtn("—", 68, function() Window:Toggle() end)
+        local closeArmed = 0
+        topBtn("X", 102, function()
+            if os.clock() - closeArmed < 3 then
+                if type(opts.OnClose) == "function" then opts.OnClose() else Window:Destroy() end
+            else
+                closeArmed = os.clock()
+                Lib:Notify({ Title = "AETHERIX", Content = opts.CloseHint or "Press X again within 3s to close the script", Duration = 3 })
+            end
+        end)
+
+        function Window:ToggleTransparency(enabled)
+            tween(main, 0.2, { BackgroundTransparency = enabled and 0.12 or 0 })
+            tween(side, 0.2, { BackgroundTransparency = enabled and 0.12 or 0 })
+        end
+
+        -- status bar loop
+        do
+            local frames, last = 0, os.clock()
+            local function refresh(fps)
+                local ping = 0
+                pcall(function() ping = math.floor(StatsService.Network.ServerStatsItem["Data Ping"]:GetValue()) end)
+                statusLabel.Text = string.format("%s %s | FPS: %d | Ping: %d | %s",
+                    string.upper(tostring(opts.Title or "AETHERIX")), string.upper(tostring(opts.Version or "")), fps, ping, os.date("%H:%M:%S"))
+            end
+            refresh(0)
+            track(RunService.RenderStepped:Connect(function()
+                frames += 1
+                local now = os.clock()
+                if now - last >= 0.5 then
+                    local fps = math.floor(frames / (now - last) + 0.5)
+                    frames, last = 0, now
+                    refresh(fps)
+                end
+            end))
+        end
+
+        -- search filter
+        local function applySearch()
+            local q = string.lower(search.Text or "")
+            for _, e in ipairs(allElements) do
+                if e.frame and e.frame.Parent then
+                    e.frame.Visible = (q == "") or (string.find(e.title, q, 1, true) ~= nil)
+                end
+            end
+        end
+        search:GetPropertyChangedSignal("Text"):Connect(applySearch)
+
+        -- ── Tabs ────────────────────────────────────────────────
+        local function selectTab(tab)
+            if not tab then return false end
+            activeTab = tab
+            for _, t in ipairs(tabs) do
+                local on = (t == tab)
+                t.page.Visible = on
+                t.bar.Visible = on
+                tween(t.title, 0.12, { TextColor3 = on and C.Text or C.Sub })
+                tween(t.btn, 0.12, { BackgroundTransparency = on and 0.85 or 1 })
+            end
+            pill.Text = tab.name
+            return true
+        end
+
+        function Window:SelectTab(target)
+            if type(target) == "number" then return selectTab(tabs[target]) end
+            return selectTab(target and target._tab)
+        end
+
+        function Window:Tab(cfg)
+            cfg = cfg or {}
+            local tab = { name = tostring(cfg.Title or "Tab") }
+            local adapter = { _tab = tab }
+
+            -- group label
+            local group = cfg.Group
+            if group and group ~= lastGroup then
+                lastGroup = group
+                local gl = label(tabList, string.upper(tostring(group)), 12, FONT_BOLD, C.Sub, { Size = UDim2.new(1, 0, 0, 26), LayoutOrder = #tabs * 2 + 1 })
+                padding(gl, 16, 0, 0, 0)
+            end
+
+            local btn = new("TextButton", {
+                Text = "", AutoButtonColor = false, BackgroundColor3 = C.Accent, BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 38), BorderSizePixel = 0, LayoutOrder = #tabs * 2 + 2, Parent = tabList,
+            })
+            accent(btn, "BackgroundColor3")
+            local bar = new("Frame", { Size = UDim2.new(0, 3, 0, 22), Position = UDim2.new(0, 0, 0.5, -11), BorderSizePixel = 0, Visible = false, Parent = btn })
+            accent(bar, "BackgroundColor3")
+            corner(bar, 2)
+            local iconName = cfg.Icon or "star"
+            local iconTxt = ICONS[iconName] or "•"
+            label(btn, iconTxt, 17, FONT_MED, C.Text, { Position = UDim2.fromOffset(14, 0), Size = UDim2.fromOffset(26, 38), TextXAlignment = Enum.TextXAlignment.Center })
+            local title = label(btn, tab.name, 14, FONT_MED, C.Sub, { Position = UDim2.fromOffset(46, 0), Size = UDim2.new(1, -52, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+            btn.MouseButton1Click:Connect(function() selectTab(tab) end)
+
+            local page = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false, Parent = content })
+            local function column(xScale, xOff)
+                local sf = new("ScrollingFrame", {
+                    BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.new(xScale, xOff, 0, 0),
+                    Size = UDim2.new(0.5, -4, 1, 0), ScrollBarThickness = 3, CanvasSize = UDim2.new(),
+                    AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = page,
+                })
+                accent(sf, "ScrollBarImageColor3")
+                vlist(sf, 8)
+                padding(sf, 0, 0, 6, 8)
+                return sf
+            end
+            local left, right = column(0, 0), column(0.5, 4)
+            local est = { [left] = 0, [right] = 0 }
+
+            tab.btn, tab.bar, tab.title, tab.page = btn, bar, title, page
+            tabs[#tabs + 1] = tab
+
+            local currentBody, currentScroll
+
+            local function newCard(titleText)
+                local col = (est[left] <= est[right]) and left or right
+                est[col] = est[col] + 40
+                local card = new("Frame", {
+                    BackgroundColor3 = C.Card, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+                    BorderSizePixel = 0, Parent = col,
+                })
+                corner(card, 8)
+                padding(card, 10, 8, 10, 10)
+                vlist(card, 8)
+                local head = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 24), LayoutOrder = 0, Parent = card })
+                local dot = new("Frame", { Size = UDim2.fromOffset(8, 8), Position = UDim2.new(0, 2, 0.5, -4), BorderSizePixel = 0, Parent = head })
+                accent(dot, "BackgroundColor3")
+                corner(dot, 4)
+                local ht = label(head, tostring(titleText), 15, FONT_BOLD, C.Accent, { Position = UDim2.fromOffset(18, 0), Size = UDim2.new(1, -44, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+                accent(ht, "TextColor3")
+                local chev = label(head, "–", 18, FONT_BOLD, C.Sub, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(24, 24), TextXAlignment = Enum.TextXAlignment.Center })
+                local bodyF = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, Parent = card })
+                vlist(bodyF, 8)
+                head.MouseButton1Click:Connect(function()
+                    bodyF.Visible = not bodyF.Visible
+                    chev.Text = bodyF.Visible and "–" or "+"
+                end)
+                currentBody, currentScroll = bodyF, col
+                currentBody:SetAttribute("col", col == left and "L" or "R")
+                return bodyF, col
+            end
+
+            local function target(h)
+                if not currentBody then newCard(tab.name) end
+                local col = currentScroll
+                est[col] = est[col] + (h or 40)
+                return currentBody, currentScroll
+            end
+
+            local function register(frame, titleText)
+                allElements[#allElements + 1] = { frame = frame, title = string.lower(tostring(titleText or "")) }
+            end
+
+            local function textBlock(parentObj, titleText, descText)
+                local holder = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = parentObj })
+                vlist(holder, 2)
+                if titleText and titleText ~= "" then
+                    label(holder, tostring(titleText), 14, FONT_MED, C.Text, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 1 })
+                end
+                local d
+                if descText and descText ~= "" then
+                    d = label(holder, tostring(descText), 12, FONT_REG, C.Sub, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 2 })
+                end
+                return holder, d
+            end
+
+            function adapter:Section(c)
+                c = type(c) == "table" and c or {}
+                newCard(c.Title or c.Name or "Section")
+            end
+
+            function adapter:Toggle(c)
+                local bodyF = target(36)
+                local state = c.Value and true or false
+                local row = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = bodyF })
+                local txt = textBlock(row, c.Title, c.Desc)
+                txt.Size = UDim2.new(1, -52, 0, 0)
+                txt.AutomaticSize = Enum.AutomaticSize.Y
+                local pad = new("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3), Parent = row })
+                local sw = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(40, 20), BorderSizePixel = 0, Parent = row })
+                corner(sw, 10)
+                local knob = new("Frame", { BackgroundColor3 = Color3.fromRGB(255, 255, 255), Size = UDim2.fromOffset(16, 16), BorderSizePixel = 0, Parent = sw })
+                corner(knob, 8)
+                local function paint(animate)
+                    local col = state and C.Accent or C.ElemHi
+                    local pos = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+                    if animate then
+                        tween(sw, 0.15, { BackgroundColor3 = col })
+                        tween(knob, 0.15, { Position = pos })
+                    else
+                        sw.BackgroundColor3 = col
+                        knob.Position = pos
+                    end
+                end
+                paint(false)
+                onTheme(function() if sw.Parent then paint(false) end end)
+                row.MouseButton1Click:Connect(function()
+                    state = not state
+                    paint(true)
+                    if type(c.Callback) == "function" then pcall(c.Callback, state) end
+                end)
+                register(row, c.Title)
+                local obj = {}
+                function obj:Set(v) state = v and true or false paint(true) end
+                function obj:Get() return state end
+                return obj
+            end
+
+            function adapter:Button(c)
+                local bodyF = target(38)
+                local b = new("TextButton", {
+                    Text = "", AutoButtonColor = false, BackgroundColor3 = C.Elem, Size = UDim2.new(1, 0, 0, 0),
+                    AutomaticSize = Enum.AutomaticSize.Y, BorderSizePixel = 0, Parent = bodyF,
+                })
+                corner(b, 6)
+                stroke(b, C.Stroke, 1)
+                padding(b, 8, 9, 8, 9)
+                local lay = vlist(b, 2)
+                lay.HorizontalAlignment = Enum.HorizontalAlignment.Center
+                label(b, tostring(c.Title or ""), 14, FONT_BOLD, C.Text, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Center, LayoutOrder = 1 })
+                if c.Desc and c.Desc ~= "" then
+                    label(b, tostring(c.Desc), 12, FONT_REG, C.Sub, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Center, LayoutOrder = 2 })
+                end
+                b.MouseEnter:Connect(function() tween(b, 0.12, { BackgroundColor3 = C.ElemHi }) end)
+                b.MouseLeave:Connect(function() tween(b, 0.12, { BackgroundColor3 = C.Elem }) end)
+                b.MouseButton1Click:Connect(function()
+                    if type(c.Callback) == "function" then pcall(c.Callback) end
+                end)
+                register(b, c.Title)
+                return {}
+            end
+
+            function adapter:Dropdown(c)
+                local bodyF = target(64)
+                local values = c.Values or {}
+                local selected = c.Value
+                local wrap = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = bodyF })
+                vlist(wrap, 4)
+                local t = textBlock(wrap, c.Title, c.Desc)
+                t.LayoutOrder = 1
+                local headBtn = new("TextButton", {
+                    Text = "", AutoButtonColor = false, BackgroundColor3 = C.Elem, Size = UDim2.new(1, 0, 0, 34),
+                    BorderSizePixel = 0, LayoutOrder = 2, Parent = wrap,
+                })
+                corner(headBtn, 6)
+                stroke(headBtn, C.Stroke, 1)
+                local cur = label(headBtn, tostring(selected or ""), 14, FONT_MED, C.Text, { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -36, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+                local arrow = label(headBtn, "v", 13, FONT_BOLD, C.Sub, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 0), Size = UDim2.fromOffset(18, 34), TextXAlignment = Enum.TextXAlignment.Center })
+                local list = new("ScrollingFrame", {
+                    BackgroundColor3 = C.Elem, Size = UDim2.new(1, 0, 0, 40), CanvasSize = UDim2.new(),
+                    AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, BorderSizePixel = 0,
+                    Visible = false, LayoutOrder = 3, Parent = wrap,
+                })
+                accent(list, "ScrollBarImageColor3")
+                corner(list, 6)
+                stroke(list, C.Stroke, 1)
+                padding(list, 4, 4, 4, 4)
+                vlist(list, 2)
+
+                local function rebuild()
+                    list.Size = UDim2.new(1, 0, 0, math.min(#values * 30 + 8, 158))
+                    for _, ch in ipairs(list:GetChildren()) do
+                        if ch:IsA("TextButton") then ch:Destroy() end
+                    end
+                    for i, v in ipairs(values) do
+                        local o = new("TextButton", {
+                            Text = tostring(v), AutoButtonColor = false, BackgroundColor3 = C.ElemHi, BackgroundTransparency = 1,
+                            TextColor3 = (v == selected) and C.Accent or C.Text, TextSize = 13, Font = FONT_MED,
+                            Size = UDim2.new(1, 0, 0, 28), BorderSizePixel = 0, LayoutOrder = i, Parent = list,
+                        })
+                        corner(o, 5)
+                        o.MouseEnter:Connect(function() tween(o, 0.1, { BackgroundTransparency = 0.5 }) end)
+                        o.MouseLeave:Connect(function() tween(o, 0.1, { BackgroundTransparency = 1 }) end)
+                        o.MouseButton1Click:Connect(function()
+                            selected = v
+                            cur.Text = tostring(v)
+                            list.Visible = false
+                            arrow.Text = "v"
+                            rebuild()
+                            if type(c.Callback) == "function" then pcall(c.Callback, v) end
+                        end)
+                    end
+                end
+                rebuild()
+                headBtn.MouseButton1Click:Connect(function()
+                    list.Visible = not list.Visible
+                    arrow.Text = list.Visible and "^" or "v"
+                end)
+                register(wrap, c.Title)
+                local obj = {}
+                function obj:Set(v) selected = v cur.Text = tostring(v) rebuild() end
+                function obj:Refresh(newValues) values = newValues or {} rebuild() end
+                return obj
+            end
+
+            function adapter:Slider(c)
+                local bodyF, scroll = target(50)
+                local range = type(c.Value) == "table" and c.Value or {}
+                local min, max = range.Min or 0, range.Max or 100
+                local step = c.Step or ((max - min) <= 5 and 0.01 or 1)
+                local value = math.clamp(range.Default or min, min, max)
+                local wrap = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = bodyF })
+                vlist(wrap, 4)
+                local top = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18), LayoutOrder = 1, Parent = wrap })
+                label(top, tostring(c.Title or ""), 14, FONT_MED, C.Text, { Size = UDim2.new(1, -60, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+                local function fmt(v) return step < 1 and string.format("%.2f", v) or tostring(math.floor(v + 0.5)) end
+                local valLbl = label(top, fmt(value), 13, FONT_BOLD, C.Accent, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(56, 18), TextXAlignment = Enum.TextXAlignment.Right })
+                accent(valLbl, "TextColor3")
+                if c.Desc and c.Desc ~= "" then
+                    label(wrap, tostring(c.Desc), 12, FONT_REG, C.Sub, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 2 })
+                end
+                local hit = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20), LayoutOrder = 3, Parent = wrap })
+                local track_ = new("Frame", { BackgroundColor3 = C.ElemHi, Position = UDim2.new(0, 0, 0.5, -3), Size = UDim2.new(1, 0, 0, 6), BorderSizePixel = 0, Parent = hit })
+                corner(track_, 3)
+                local fill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BorderSizePixel = 0, Parent = track_ })
+                accent(fill, "BackgroundColor3")
+                corner(fill, 3)
+                local knob = new("Frame", { BackgroundColor3 = Color3.fromRGB(255, 255, 255), AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(14, 14), Position = UDim2.new(0, 0, 0.5, 0), BorderSizePixel = 0, Parent = track_ })
+                corner(knob, 7)
+                local function paint()
+                    local a = (max == min) and 0 or (value - min) / (max - min)
+                    fill.Size = UDim2.new(a, 0, 1, 0)
+                    knob.Position = UDim2.new(a, 0, 0.5, 0)
+                    valLbl.Text = fmt(value)
+                end
+                paint()
+                local dragging = false
+                local function setFromX(x)
+                    local w = track_.AbsoluteSize.X
+                    if w <= 0 then return end
+                    local a = math.clamp((x - track_.AbsolutePosition.X) / w, 0, 1)
+                    local v = min + (max - min) * a
+                    v = math.clamp(math.floor(v / step + 0.5) * step, min, max)
+                    if v ~= value then
+                        value = v
+                        paint()
+                        if type(c.Callback) == "function" then pcall(c.Callback, value) end
+                    end
+                end
+                hit.InputBegan:Connect(function(input)
+                    if isPointer(input) then
+                        dragging = true
+                        scroll.ScrollingEnabled = false
+                        setFromX(input.Position.X)
+                        input.Changed:Connect(function()
+                            if input.UserInputState == Enum.UserInputState.End then
+                                dragging = false
+                                scroll.ScrollingEnabled = true
+                            end
+                        end)
+                    end
+                end)
+                track(UIS.InputChanged:Connect(function(input)
+                    if dragging and isMove(input) then setFromX(input.Position.X) end
+                end))
+                register(wrap, c.Title)
+                local obj = {}
+                function obj:Set(v) value = math.clamp(tonumber(v) or min, min, max) paint() end
+                return obj
+            end
+
+            function adapter:Input(c)
+                local bodyF = target(64)
+                local wrap = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = bodyF })
+                vlist(wrap, 4)
+                local t = textBlock(wrap, c.Title, c.Desc)
+                t.LayoutOrder = 1
+                local box = new("TextBox", {
+                    BackgroundColor3 = C.Elem, Size = UDim2.new(1, 0, 0, 34), PlaceholderText = tostring(c.Placeholder or "Enter text..."),
+                    PlaceholderColor3 = C.Sub, Text = tostring(c.Value or c.Default or ""), TextColor3 = C.Text, TextSize = 14,
+                    Font = FONT_MED, ClearTextOnFocus = false, BorderSizePixel = 0, LayoutOrder = 2, Parent = wrap,
+                })
+                corner(box, 6)
+                stroke(box, C.Stroke, 1)
+                box.FocusLost:Connect(function()
+                    if type(c.Callback) == "function" then pcall(c.Callback, box.Text) end
+                end)
+                register(wrap, c.Title)
+                local obj = {}
+                function obj:Set(v) box.Text = tostring(v) end
+                return obj
+            end
+
+            function adapter:Paragraph(c)
+                local bodyF = target(60)
+                local box = new("Frame", { BackgroundColor3 = C.Card, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BorderSizePixel = 0, Parent = bodyF })
+                corner(box, 8)
+                local st = stroke(box, C.Accent, 1)
+                accent(st, "Color")
+                padding(box, 10, 8, 10, 10)
+                vlist(box, 3)
+                if c.Title and c.Title ~= "" then
+                    label(box, tostring(c.Title), 15, FONT_BOLD, C.Text, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 1 })
+                end
+                local desc = label(box, tostring(c.Desc or ""), 13, FONT_REG, C.Sub, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, RichText = true, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 2 })
+                register(box, (c.Title or "") .. " " .. (c.Desc or ""))
+                local obj = {}
+                function obj:SetDesc(text) desc.Text = tostring(text or "") end
+                return obj
+            end
+
+            if #tabs == 1 and not activeTab then selectTab(tab) end
+            return adapter
+        end
+
+        function Window:Destroy()
+            for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+            conns = {}
+            accentList, hooks = {}, {}
+            if toastHolder and toastHolder.Parent == gui then toastHolder = nil end
+            pcall(function() gui:Destroy() end)
+        end
+
+        return Window
+    end
+
+    return Lib
+end)()
+
+-- ─────────────────────────────────────────────────────────────
+-- Loop registry (flag → delay → function) used by UI + auto-resume
+-- ─────────────────────────────────────────────────────────────
+local LoopDefs = {
+    AutoRoll      = { delay = function() return 15 end,                  fn = doAutoRollAssert },
+    ManualRoll    = { delay = function() return State.RollDelay end,     fn = doManualRoll },
+    AutoCollect   = { delay = function() return State.CollectDelay end,  fn = doCollect },
+    AutoEquipBest = { delay = function() return State.EquipBestDelay end,fn = doEquipBest },
+    AutoRebirth   = { delay = function() return State.RebirthDelay end,  fn = doRebirth },
+    AutoSell      = { delay = function() return State.SellDelay end,     fn = doSell },
+    AutoRewards   = { delay = function() return State.RewardDelay end,   fn = doRewards },
+    AutoSpin      = { delay = function() return State.SpinDelay end,     fn = doSpin },
+    AutoTower     = { delay = function() return 15 end,                  fn = function() send("Towers", "SetAutoTower", true) end },
+    AutoTowerTeam = { delay = function() return State.TowerTeamDelay end,fn = doTowerTeam },
+    AutoReplay    = { delay = function() return State.ReplayDelay end,   fn = doReplay },
+}
+
+local function loopToggle(flag, extra)
+    return function(v)
+        local d = LoopDefs[flag]
+        setLoop(flag, v, d.delay, d.fn)
+        if extra then pcall(extra, v) end
+    end
+end
+
+local Window, StatusCard, LearnCard
+
+local function notify(title, text)
+    if Window then pcall(function() AetherixUI:Notify({ Title = title, Content = text, Duration = 3 }) end) end
+end
+
+local function BuildUI()
+    Window = AetherixUI:CreateWindow({
+        Title = HUB_NAME,
+        Version = HUB_VERSION,
+        OnClose = function()
+            for k, v in pairs(State) do if type(v) == "boolean" and k ~= "AntiAFK" then State[k] = false end end
+            pcall(function() RunService:Set3dRenderingEnabled(true) end)
+            Alive = false
+            saveConfig()
+            if Window then pcall(function() Window:Destroy() end) end
+        end,
+        CloseHint = "กด X อีกครั้งภายใน 3 วินาทีเพื่อปิดสคริปต์",
+    })
+
+    -- ══════════ Tab 1: สถานะ ══════════
+    local T1 = Window:Tab({ Title = "สถานะ", Icon = "home", Group = "หลัก" })
+    T1:Section({ Title = "ภาพรวม", Side = "Left" })
+    StatusCard = T1:Paragraph({ Title = HUB_NAME .. " " .. HUB_VERSION, Desc = "กำลังโหลด...", Kind = "Info" })
+    T1:Button({
+        Title = "เข้าเซิร์ฟเวอร์ใหม่ (Rejoin)",
+        Callback = rejoin,
+    })
+    T1:Section({ Title = "วิธีใช้ย่อ", Side = "Right" })
+    T1:Paragraph({
+        Title = "ระบบเรียนรู้ (Learn Mode)",
+        Desc = "ฟีเจอร์ที่ต้องมี argument เช่น ซื้ออัปเกรด ทอยเทรต/เกรด ฟิวส์ ให้ไปกดในเกมเองหนึ่งครั้ง แล้วเปิดแท็บ \"เรียนรู้ & ยิงซ้ำ\" เลือกคำสั่งที่จำได้ เปิดยิงซ้ำ",
+    })
+
+    -- ══════════ Tab 2: ฟาร์มหลัก ══════════
+    local T2 = Window:Tab({ Title = "ฟาร์มหลัก", Icon = "gem", Group = "ฟังก์ชัน" })
+    T2:Section({ Title = "ทอยลูกเต๋า", Side = "Left" })
+    T2:Toggle({
+        Title = "ทอยออโต้ของเกม",
+        Desc = "เปิดระบบ Auto Roll ในเกม (ยิงซ้ำทุก 15 วินาทีกันหลุด)",
+        Value = State.AutoRoll,
+        Callback = loopToggle("AutoRoll", function(v) if not v then send("RollService", "SetAutoRoll", false) end end),
+    })
+    T2:Toggle({
+        Title = "ทอยเอง (RollDice วนซ้ำ)",
+        Desc = "ใช้เมื่อออโต้ของเกมไม่ติด หรืออยากทอยเร็วกว่า",
+        Value = State.ManualRoll,
+        Callback = loopToggle("ManualRoll"),
+    })
+    T2:Slider({
+        Title = "ความถี่ทอยเอง (วินาที)",
+        Value = { Min = 0.1, Max = 3, Default = State.RollDelay },
+        Callback = function(v) State.RollDelay = v markDirty() end,
+    })
+
+    T2:Section({ Title = "รายได้ & ยูนิต", Side = "Right" })
+    T2:Toggle({
+        Title = "เก็บเงินอัตโนมัติ (CollectBalance)",
+        Value = State.AutoCollect,
+        Callback = loopToggle("AutoCollect"),
+    })
+    T2:Slider({
+        Title = "ความถี่เก็บเงิน (วินาที)",
+        Value = { Min = 1, Max = 60, Default = State.CollectDelay },
+        Callback = function(v) State.CollectDelay = v markDirty() end,
+    })
+    T2:Toggle({
+        Title = "จัดยูนิตที่ดีที่สุด (Equip Best)",
+        Value = State.AutoEquipBest,
+        Callback = loopToggle("AutoEquipBest"),
+    })
+    T2:Slider({
+        Title = "ความถี่จัดยูนิต (วินาที)",
+        Value = { Min = 5, Max = 300, Default = State.EquipBestDelay },
+        Callback = function(v) State.EquipBestDelay = v markDirty() end,
+    })
+
+    T2:Section({ Title = "⚠ ใช้/ขายของ (ปิดไว้ตอนเริ่มเสมอ)", Side = "Left" })
+    T2:Toggle({
+        Title = "รีเบิร์ธอัตโนมัติ",
+        Desc = "ยิงคำสั่ง Rebirth ตามเวลาที่ตั้ง รีเซ็ตความคืบหน้าบางส่วนตามกติกาเกม",
+        Value = State.AutoRebirth,
+        Callback = loopToggle("AutoRebirth"),
+    })
+    T2:Slider({
+        Title = "ความถี่รีเบิร์ธ (วินาที)",
+        Value = { Min = 5, Max = 600, Default = State.RebirthDelay },
+        Callback = function(v) State.RebirthDelay = v markDirty() end,
+    })
+    T2:Toggle({
+        Title = "ขายยูนิตในกระเป๋าอัตโนมัติ",
+        Desc = "เรียก SellInventory วนซ้ำ ยูนิตที่ไม่ล็อกอาจถูกขายทั้งหมด ล็อกตัวที่อยากเก็บก่อนเปิด",
+        Value = State.AutoSell,
+        Callback = loopToggle("AutoSell"),
+    })
+    T2:Slider({
+        Title = "ความถี่ขาย (วินาที)",
+        Value = { Min = 5, Max = 300, Default = State.SellDelay },
+        Callback = function(v) State.SellDelay = v markDirty() end,
+    })
+
+    -- ══════════ Tab 3: หอคอย & รางวัล ══════════
+    local T3 = Window:Tab({ Title = "หอคอย & รางวัล", Icon = "swords", Group = "ฟังก์ชัน" })
+    T3:Section({ Title = "หอคอย (Towers)", Side = "Left" })
+    T3:Toggle({
+        Title = "หอคอยออโต้ของเกม",
+        Desc = "เปิด SetAutoTower (ยิงซ้ำทุก 15 วินาที)",
+        Value = State.AutoTower,
+        Callback = loopToggle("AutoTower", function(v) if not v then send("Towers", "SetAutoTower", false) end end),
+    })
+    T3:Toggle({
+        Title = "จัดทีมหอคอยที่ดีที่สุดอัตโนมัติ",
+        Value = State.AutoTowerTeam,
+        Callback = loopToggle("AutoTowerTeam"),
+    })
+    T3:Slider({
+        Title = "ความถี่จัดทีม (วินาที)",
+        Value = { Min = 10, Max = 600, Default = State.TowerTeamDelay },
+        Callback = function(v) State.TowerTeamDelay = v markDirty() end,
+    })
+    T3:Button({
+        Title = "จัดทีมหอคอยที่ดีที่สุดตอนนี้",
+        Callback = function() task.spawn(doTowerTeam) end,
+    })
+
+    T3:Section({ Title = "รางวัล", Side = "Right" })
+    T3:Toggle({
+        Title = "รับรางวัลอัตโนมัติ",
+        Desc = "รายวัน, ออฟไลน์, กลุ่ม, เควส",
+        Value = State.AutoRewards,
+        Callback = loopToggle("AutoRewards"),
+    })
+    T3:Slider({
+        Title = "ความถี่รับรางวัล (วินาที)",
+        Value = { Min = 10, Max = 600, Default = State.RewardDelay },
+        Callback = function(v) State.RewardDelay = v markDirty() end,
+    })
+    T3:Button({
+        Title = "รับรางวัลทั้งหมดตอนนี้",
+        Callback = function()
+            task.spawn(doRewards)
+            notify("รางวัล", "ส่งคำสั่งรับรางวัลแล้ว")
+        end,
+    })
+    T3:Toggle({
+        Title = "สปินอัตโนมัติ",
+        Value = State.AutoSpin,
+        Callback = loopToggle("AutoSpin"),
+    })
+    T3:Slider({
+        Title = "ความถี่สปิน (วินาที)",
+        Value = { Min = 2, Max = 120, Default = State.SpinDelay },
+        Callback = function(v) State.SpinDelay = v markDirty() end,
+    })
+
+    -- ══════════ Tab 4: เรียนรู้ & ยิงซ้ำ ══════════
+    local T4 = Window:Tab({ Title = "เรียนรู้ & ยิงซ้ำ", Icon = "zap", Group = "ฟังก์ชัน" })
+    T4:Section({ Title = "คำสั่งที่จำได้", Side = "Left" })
+    LearnCard = T4:Paragraph({ Title = "สถานะ Learn Mode", Desc = "-" })
+
+    local dd = T4:Dropdown({
+        Title = "เลือกคำสั่งที่จะยิงซ้ำ",
+        Desc = "ต้องกดคำสั่งนั้นในเกมเองก่อน 1 ครั้ง (เช่น ซื้ออัปเกรด, ทอยเทรต, ทอยเกรด, ฟิวส์, อัปเลเวลช่อง)",
+        Values = {},
+        Value = "",
+        Callback = function(v) State.ReplayKey = tostring(v) markDirty() end,
+    })
+    T4:Button({
+        Title = "รีเฟรชรายการ",
+        Callback = function()
+            local list = {}
+            for _, k in ipairs(LearnOrder) do list[#list + 1] = k end
+            dd:Refresh(list)
+            notify("Learn Mode", ("จำได้ %d คำสั่ง"):format(#list))
+        end,
+    })
+    T4:Button({
+        Title = "ยิงคำสั่งที่เลือกหนึ่งครั้ง",
+        Callback = function()
+            if State.ReplayKey == "" or not Learned[State.ReplayKey] then
+                return notify("Learn Mode", "ยังไม่ได้เลือกคำสั่ง")
+            end
+            replay(State.ReplayKey)
+        end,
+    })
+
+    T4:Section({ Title = "ยิงซ้ำอัตโนมัติ", Side = "Right" })
+    T4:Toggle({
+        Title = "ยิงซ้ำคำสั่งที่เลือกอัตโนมัติ",
+        Desc = "ระวัง: ถ้าคำสั่งใช้เงิน/ของ จะใช้ซ้ำไปเรื่อย ๆ ไม่เปิดเองตอนโหลดสคริปต์",
+        Value = State.AutoReplay,
+        Callback = loopToggle("AutoReplay"),
+    })
+    T4:Slider({
+        Title = "ความถี่ยิงซ้ำ (วินาที)",
+        Value = { Min = 0.2, Max = 30, Default = State.ReplayDelay },
+        Callback = function(v) State.ReplayDelay = v markDirty() end,
+    })
+
+    -- ══════════ Tab 5: โค้ด ══════════
+    local T5 = Window:Tab({ Title = "โค้ด", Icon = "gift", Group = "ฟังก์ชัน" })
+    T5:Section({ Title = "ใส่โค้ดโปรโมชัน", Side = "Left" })
+    local codeText = ""
+    T5:Input({
+        Title = "โค้ด (ใส่ได้หลายอัน คั่นด้วยเว้นวรรคหรือ ,)",
+        Placeholder = "ใส่โค้ดที่นี่",
+        Callback = function(t) codeText = t end,
+    })
+    T5:Button({
+        Title = "ยืนยันโค้ด",
+        Callback = function()
+            if codeText == "" then return notify("โค้ด", "ยังไม่ได้ใส่โค้ด") end
+            task.spawn(function()
+                local n = redeemCodes(codeText)
+                notify("โค้ด", ("ส่งโค้ด %d อันแล้ว ดูผลในแชท/แจ้งเตือนของเกม"):format(n))
+            end)
+        end,
+    })
+
+    -- ══════════ Tab 6: ตั้งค่า ══════════
+    local T6 = Window:Tab({ Title = "ตั้งค่า", Icon = "settings", Group = "ระบบ" })
+    T6:Section({ Title = "ผู้เล่น", Side = "Left" })
+    T6:Toggle({
+        Title = "กันหลุดเมื่อ AFK",
+        Value = State.AntiAFK,
+        Callback = setAntiAFK,
+    })
+    T6:Toggle({
+        Title = "ปรับความเร็วเดิน",
+        Value = State.SpeedEnabled,
+        Callback = function(v) State.SpeedEnabled = v markDirty() applySpeed() end,
+    })
+    T6:Slider({
+        Title = "ความเร็วเดิน",
+        Value = { Min = 16, Max = 120, Default = State.WalkSpeed },
+        Callback = function(v) State.WalkSpeed = v markDirty() applySpeed() end,
+    })
+    T6:Toggle({
+        Title = "โหมดประหยัดเฟรม (ปิดการเรนเดอร์ 3D)",
+        Desc = "จอจะดำ แต่สคริปต์ยังทำงานปกติ ลดภาระเครื่อง",
+        Value = State.FpsSaver,
+        Callback = setFpsSaver,
+    })
+
+    T6:Section({ Title = "ระบบ", Side = "Right" })
+    T6:Toggle({
+        Title = "แสดง Debug ใน Console (F9)",
+        Value = State.Debug,
+        Callback = function(v) State.Debug = v markDirty() end,
+    })
+    T6:Button({
+        Title = "บันทึกการตั้งค่าตอนนี้",
+        Callback = function() saveConfig() notify("ตั้งค่า", "บันทึกแล้ว") end,
+    })
+    T6:Paragraph({
+        Title = "เปิด/ซ่อนเมนู",
+        Desc = "กดปุ่ม RightShift",
+    })
+end
+
+-- ─────────────────────────────────────────────────────────────
+-- Launch
+-- ─────────────────────────────────────────────────────────────
+if game.PlaceId ~= PLACE_ID then
+    warn(("[AETHERIX] สคริปต์นี้ทำสำหรับ PlaceId %d (ตอนนี้ %d) บางฟีเจอร์อาจใช้ไม่ได้"):format(PLACE_ID, game.PlaceId))
+end
+
+if not Network then
+    warn("[AETHERIX] ไม่พบ ReplicatedStorage.Network — เกมอาจอัปเดตโครงสร้าง")
+end
+
+local learnerOk = installLearner()
+
+local okUI, errUI = pcall(BuildUI)
+if not okUI then warn("[AETHERIX] UI error:", tostring(errUI)) end
+
+setAntiAFK(State.AntiAFK)
+if State.FpsSaver then setFpsSaver(true) end
+
+-- เปิดลูปที่เซฟไว้ (ธงอันตรายถูกรีเซ็ตเป็น false ตอนโหลดแล้ว)
+for flag, d in pairs(LoopDefs) do
+    if State[flag] then startLoop(flag, d.delay, d.fn) end
+end
+
+local conns = {}
+conns[#conns + 1] = UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == Enum.KeyCode.RightShift and Window then
+        pcall(function() Window:Toggle() end)
+    end
+end)
+conns[#conns + 1] = LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    applySpeed()
+end)
+
+-- status + autosave thread
+task.spawn(function()
+    local tick = 0
+    while Alive do
+        tick = tick + 1
+        local up = os.clock() - Stats.Started
+        if StatusCard then
+            pcall(function()
+                StatusCard:SetDesc(("ออนไลน์: %02d:%02d:%02d\nคำสั่งที่ส่ง: %d | ผิดพลาด: %d | ทอย: %d\nLearn Mode: %s"):format(
+                    math.floor(up / 3600), math.floor(up / 60) % 60, math.floor(up) % 60,
+                    Stats.Calls, Stats.Errors, Stats.Rolls, LearnStatus))
+            end)
+        end
+        if LearnCard then
+            pcall(function()
+                local lines = { ("สถานะ: %s\nจำได้แล้ว: %d คำสั่ง"):format(LearnStatus, #LearnOrder) }
+                for i, l in ipairs(LearnLog) do lines[#lines + 1] = l if i >= 6 then break end end
+                LearnCard:SetDesc(table.concat(lines, "\n"))
+            end)
+        end
+        if State.SpeedEnabled and tick % 3 == 0 then pcall(applySpeed) end
+        if dirty and tick % 5 == 0 then saveConfig() end
+        task.wait(1)
+    end
+end)
+
+if getgenv then
+    getgenv().AETHERIX_ANIMEDICE_LOADED = true
+    getgenv().AETHERIX_ANIMEDICE_STOP = function()
+        Alive = false
+        for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+        if antiAfkConn then pcall(function() antiAfkConn:Disconnect() end) end
+        pcall(function() RunService:Set3dRenderingEnabled(true) end)
+        if Window then pcall(function() Window:Destroy() end) end
+    end
+end
+
+pcall(function()
+    AetherixUI:Notify({
+        Title = HUB_NAME .. " " .. HUB_VERSION,
+        Content = learnerOk and "โหลดสำเร็จ — Learn Mode พร้อมใช้งาน" or "โหลดสำเร็จ (Learn Mode ใช้ไม่ได้บน executor นี้)",
+        Duration = 4,
+    })
+end)
