@@ -14,7 +14,7 @@
 -- ─────────────────────────────────────────────────────────────
 -- ── AETHERIX branding (edit here) ───────────────────────────
 -- Logo: image link (https://...png/jpg) OR "rbxassetid://123456". Empty = default sword icon.
-local AETHERIX_LOGO    = "rbxassetid://73073458410412"
+local AETHERIX_LOGO    = "rbxassetid://139066847502473"
 -- Discord invite shown as a "Copy" button in the Home tab. Empty = button hidden.
 local AETHERIX_DISCORD = "https://discord.gg/nqmPVSQhQC"
 local function logoIcon()
@@ -2241,8 +2241,8 @@ end
 --  AETHERIX UI  (WindUI · Willow Glass theme from ob13 · draggable + resizable)
 -- ═════════════════════════════════════════════════════════════
 -- Images (edit here): window icon / open-button icon (URL or rbxassetid), Discord card image
-local UI_IMAGE      = "https://i.postimg.cc/BbdNqW5g/a64070bdf0a63b4e7c0f6176e7e92bb5.jpg"
-local DISCORD_IMAGE = "rbxassetid://115578801000914"
+local UI_IMAGE      = "https://cdn.discordapp.com/attachments/1555842577872199771/1558289497957998672/1791541779169.jpg?ex=6acae5af&is=6ac9942f&hm=878e78a200dda3e36939733954261ebd96df0d54daf52724a59bff7f2f261d55&"
+local DISCORD_IMAGE = "rbxassetid://139066847502473"
 
 local AetherixUI
 local WindUISource
