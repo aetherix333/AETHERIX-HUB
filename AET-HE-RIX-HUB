@@ -14,7 +14,7 @@
 -- ─────────────────────────────────────────────────────────────
 -- ── AETHERIX branding (edit here) ───────────────────────────
 -- Logo: image link (https://...png/jpg) OR "rbxassetid://123456". Empty = default sword icon.
-local AETHERIX_LOGO    = "rbxassetid://86828476734173"
+local AETHERIX_LOGO    = "rbxassetid://115392023058850"
 -- Discord invite shown as a "Copy" button in the Home tab. Empty = button hidden.
 local AETHERIX_DISCORD = "https://discord.gg/nqmPVSQhQC"
 local function logoIcon()
