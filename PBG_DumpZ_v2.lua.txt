@@ -1,0 +1,732 @@
+--[[
+    PBG DumpZ v2
+    - UI: Obsidian (sidebar ซ้าย + กล่อง 2 คอลัมน์ ธีมม่วง)
+    - ภาษา: ไทย / English (เปลี่ยนได้ที่แท็บ ตั้งค่า)
+    - แท็บ: หน้าหลัก (Dump) / ดักจับ Remote / ดึงข้อมูลแมพ / ตั้งค่า
+]]
+
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+
+local APP_NAME = "PBG DumpZ"
+local ROOT_FOLDER = "PBGDumpZ"
+local CONFIG_FILE = ROOT_FOLDER .. "/App.json"
+local DUMP_FOLDER = "PBGDumpZ_Dumps"
+local OBSIDIAN_REPO = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+
+--------------------------------------------------------------------
+-- ไฟล์ / config
+--------------------------------------------------------------------
+local function trim(value)
+    local s = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    return s
+end
+
+local function safeFolder(path)
+    if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder(path) then
+        pcall(makefolder, path)
+    end
+end
+
+safeFolder(ROOT_FOLDER)
+safeFolder(DUMP_FOLDER)
+
+local function loadJsonFile(path, fallback)
+    if type(readfile) ~= "function" then return fallback end
+    local okRead, body = pcall(readfile, path)
+    if not okRead or type(body) ~= "string" or body == "" then return fallback end
+    local okDecode, result = pcall(function() return HttpService:JSONDecode(body) end)
+    if okDecode and type(result) == "table" then return result end
+    return fallback
+end
+
+local function saveJsonFile(path, data)
+    if type(writefile) ~= "function" then return false end
+    safeFolder(ROOT_FOLDER)
+    local okEncode, body = pcall(function() return HttpService:JSONEncode(data) end)
+    if not okEncode then return false end
+    return pcall(writefile, path, body)
+end
+
+local AppConfig = loadJsonFile(CONFIG_FILE, {Lang = "th"})
+if AppConfig.Lang ~= "th" and AppConfig.Lang ~= "en" then AppConfig.Lang = "th" end
+
+--------------------------------------------------------------------
+-- ภาษา (TH / EN)
+--------------------------------------------------------------------
+local STR = {
+    th = {
+        tab_home = "หน้าหลัก", tab_spy = "ดักจับ Remote", tab_map = "ดึงข้อมูลแมพ", tab_settings = "ตั้งค่า",
+        intro_sub = "เครื่องมือดึงข้อมูลเกมอเนกประสงค์",
+        ready_title = "พร้อมใช้งาน", ready_desc = "เลือกแท็บที่ต้องการได้เลย",
+
+        grp_dump = "ดึงข้อมูลเกม (Dump)", grp_result = "ผลลัพธ์ / ตัวอย่าง",
+        svc = "เลือก Service", subpath = "โฟลเดอร์ย่อย (ไม่ใส่ก็ได้)",
+        opt_children = "รวมอ็อบเจกต์ย่อยทั้งหมด", opt_attrs = "รวม Attributes",
+        opt_props = "รวม Properties ของ Part / Humanoid", opt_source = "บันทึกเป็นรูปแบบโค้ด Lua",
+        filename = "ชื่อไฟล์ (เว้นว่าง = ตั้งชื่ออัตโนมัติ)",
+        btn_dump_file = "Dump แล้วบันทึกลงไฟล์", btn_dump_preview = "Dump และดูตัวอย่าง",
+        btn_copy_path = "คัดลอกพาธไฟล์ล่าสุด",
+        status_ready = "สถานะ: พร้อมใช้งาน เลือกเป้าหมายแล้วกด Dump",
+        status_working = "สถานะ: กำลังดึงข้อมูล...",
+        status_saved = "สถานะ: บันทึกแล้วที่ %s",
+        status_preview = "สถานะ: ดึงข้อมูลสำเร็จ (%d ตัวอักษร)",
+        preview_empty = "-- ยังไม่มีข้อมูล กด \"Dump และดูตัวอย่าง\" ที่ฝั่งซ้าย",
+        preview_cut = "\n... (แสดงเฉพาะ %d ตัวอักษรแรก จากทั้งหมด %d)",
+        no_file = "ยังไม่มีไฟล์ที่บันทึก", copied = "คัดลอกแล้ว",
+        target_missing = "ไม่พบเป้าหมาย: %s", dump_failed = "Dump ไม่สำเร็จ: %s",
+        home_info = "เลือก Service ตั้งค่าตัวเลือก แล้วกด Dump ไฟล์จะถูกเก็บในโฟลเดอร์ workspace ของ executor",
+
+        spy_group = "ตั้งค่าการดักจับ", spy_log_group = "Log ล่าสุด (15 รายการ)",
+        spy_enable = "เปิดใช้งาน Remote Spy",
+        spy_enable_tip = "บันทึกการเรียก FireServer / InvokeServer ที่เกมส่งไปหา Server",
+        spy_skip = "ข้าม Remote ที่ชื่อมีคำว่า (คั่นด้วยจุลภาค)",
+        spy_save = "บันทึก Log เป็นไฟล์ .lua", spy_clear = "ล้าง Log",
+        spy_off = "สถานะ: ปิดอยู่ เปิดสวิตช์แล้วเล่นเกมตามปกติ",
+        spy_on = "สถานะ: กำลังดักจับ จับได้ %d ครั้ง",
+        spy_unsupported = "Executor นี้ไม่รองรับ hookmetamethod จึงใช้ Remote Spy ไม่ได้",
+        spy_log_empty = "-- ยังไม่มีข้อมูล เปิดใช้งานแล้วเล่นเกมเพื่อดู Log",
+        spy_saved = "บันทึก %d รายการที่ %s", spy_cleared = "ล้าง Log แล้ว",
+
+        map_group = "ตัวเลือกแมพ", map_howto_group = "วิธีใช้",
+        map_folder = "ชื่อโฟลเดอร์ผลลัพธ์", map_scripts = "รวม Scripts",
+        map_chars = "รวม Humanoid / Animator และตัวละครผู้เล่น",
+        map_save_studio = "บันทึกเป็นไฟล์ Studio (.rbxlx)",
+        map_dump_copy = "Dump แมพเป็นสคริปต์ Lua แล้วคัดลอก", map_copy_last = "คัดลอกสคริปต์ล่าสุด",
+        map_scanning = "กำลังสแกน Workspace อาจใช้เวลาสักครู่...",
+        map_copied = "คัดลอกสคริปต์แมพแล้ว (%d อ็อบเจกต์)",
+        map_none = "ยังไม่มีสคริปต์ กดปุ่ม Dump แมพก่อน",
+        map_unsupported = "Executor นี้ไม่รองรับ saveinstance() ให้ใช้ปุ่ม Dump แมพเป็นสคริปต์แทน",
+        map_failed = "ไม่สำเร็จ: %s", map_studio_ok = "บันทึกไฟล์ Studio แล้ว",
+        map_howto = "วิธีง่ายที่สุด: กด \"บันทึกเป็นไฟล์ Studio (.rbxlx)\" แล้วเปิดไฟล์ใน Roblox Studio\nถ้า executor ไม่รองรับ ให้ใช้ \"Dump แมพเป็นสคริปต์ Lua\" แล้วนำไปรันใน Studio\nหมายเหตุ: Terrain ต้องใช้ไฟล์ .rbxlx เท่านั้น",
+        map_status_idle = "สถานะ: ยังไม่ได้ Dump",
+
+        set_lang_group = "ภาษา / Language", set_lang = "เลือกภาษา",
+        set_lang_note = "เมื่อเปลี่ยนภาษา หน้าต่างจะโหลดใหม่อัตโนมัติ",
+        set_menu_group = "เมนู", set_keybind = "ปุ่มลัดเปิด/ปิดเมนู", set_unload = "ปิดสคริปต์",
+    },
+    en = {
+        tab_home = "Home", tab_spy = "Remote Spy", tab_map = "Map Dump", tab_settings = "Settings",
+        intro_sub = "Universal game data dumper",
+        ready_title = "Ready", ready_desc = "Pick a tab to get started",
+
+        grp_dump = "Game Dump", grp_result = "Result / Preview",
+        svc = "Target Service", subpath = "Sub path (optional)",
+        opt_children = "Include all descendants", opt_attrs = "Include attributes",
+        opt_props = "Include Part / Humanoid properties", opt_source = "Save as Lua source format",
+        filename = "File name (empty = auto)",
+        btn_dump_file = "Dump to file", btn_dump_preview = "Dump & preview",
+        btn_copy_path = "Copy last file path",
+        status_ready = "Status: ready. Pick a target and press Dump",
+        status_working = "Status: dumping...",
+        status_saved = "Status: saved to %s",
+        status_preview = "Status: dump complete (%d chars)",
+        preview_empty = "-- No data yet. Press \"Dump & preview\" on the left",
+        preview_cut = "\n... (showing first %d of %d characters)",
+        no_file = "No file saved yet", copied = "Copied",
+        target_missing = "Target not found: %s", dump_failed = "Dump failed: %s",
+        home_info = "Pick a service, set the options, then press Dump. Files are saved to your executor's workspace folder",
+
+        spy_group = "Spy settings", spy_log_group = "Latest log (15 entries)",
+        spy_enable = "Enable Remote Spy",
+        spy_enable_tip = "Logs FireServer / InvokeServer calls the game sends to the server",
+        spy_skip = "Skip remotes containing (comma separated)",
+        spy_save = "Save log as .lua file", spy_clear = "Clear log",
+        spy_off = "Status: off. Turn it on, then play normally",
+        spy_on = "Status: logging, %d calls captured",
+        spy_unsupported = "This executor does not support hookmetamethod, Remote Spy is unavailable",
+        spy_log_empty = "-- No data yet. Enable the spy and play to see logs",
+        spy_saved = "Saved %d calls to %s", spy_cleared = "Log cleared",
+
+        map_group = "Map options", map_howto_group = "How to use",
+        map_folder = "Output folder name", map_scripts = "Include scripts",
+        map_chars = "Include Humanoid / Animator and player characters",
+        map_save_studio = "Save as Studio file (.rbxlx)",
+        map_dump_copy = "Dump map as Lua script & copy", map_copy_last = "Copy last script",
+        map_scanning = "Scanning Workspace, this may take a moment...",
+        map_copied = "Map script copied (%d objects)",
+        map_none = "No script yet. Press Dump map first",
+        map_unsupported = "saveinstance() is not supported. Use the Lua script dump instead",
+        map_failed = "Failed: %s", map_studio_ok = "Studio file saved",
+        map_howto = "Easiest: press \"Save as Studio file (.rbxlx)\" and open the file in Roblox Studio.\nIf your executor can't do that, use \"Dump map as Lua script\" and run it in Studio.\nNote: Terrain is only included in the .rbxlx file.",
+        map_status_idle = "Status: nothing dumped yet",
+
+        set_lang_group = "ภาษา / Language", set_lang = "Language",
+        set_lang_note = "Changing the language reloads the window automatically",
+        set_menu_group = "Menu", set_keybind = "Menu toggle key", set_unload = "Unload script",
+    },
+}
+
+local function L(key, ...)
+    local pack = STR[AppConfig.Lang] or STR.th
+    local text = pack[key] or STR.en[key] or key
+    if select("#", ...) > 0 then return string.format(text, ...) end
+    return text
+end
+
+--------------------------------------------------------------------
+-- สถานะที่ใช้ร่วมกัน (คงอยู่แม้เปลี่ยนภาษา)
+--------------------------------------------------------------------
+local S = {
+    Service = "ReplicatedStorage", SubPath = "", FileName = "",
+    Children = true, Attributes = true, Properties = false, SourceFormat = false,
+    MapFolder = "ValenHub_Map", MapScripts = false, MapChars = false,
+}
+local UI = {}
+local LastDumpData, LastDumpPath, LastMapScript = nil, nil, nil
+local PREVIEW_LIMIT = 3500
+
+local function notify(title, desc)
+    if UI.Library then
+        pcall(function() UI.Library:Notify({Title = title, Description = desc, Time = 4}) end)
+    end
+end
+
+local function setText(label, text)
+    if label then pcall(function() label:SetText(text) end) end
+end
+
+local function indexOf(list, value)
+    for i, v in ipairs(list) do if v == value then return i end end
+    return 1
+end
+
+local function yieldEvery(n, step)
+    if n % step == 0 then task.wait() end
+end
+
+--------------------------------------------------------------------
+-- Intro
+--------------------------------------------------------------------
+local function tween(instance, duration, props)
+    TweenService:Create(instance, TweenInfo.new(duration, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), props):Play()
+end
+
+local function showIntro()
+    local ok, err = pcall(function()
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "PBGIntro"
+        gui.DisplayOrder = 999999
+        gui.ResetOnSpawn = false
+        gui.IgnoreGuiInset = true
+        gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+
+        local bg = Instance.new("Frame")
+        bg.Size = UDim2.new(1, 0, 1, 0)
+        bg.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
+        bg.BorderSizePixel = 0
+        bg.Parent = gui
+
+        local title = Instance.new("TextLabel")
+        title.Size = UDim2.new(1, 0, 0, 60)
+        title.Position = UDim2.new(0, 0, 0.5, -50)
+        title.BackgroundTransparency = 1
+        title.Text = string.upper(APP_NAME)
+        title.TextColor3 = Color3.fromRGB(168, 85, 247)
+        title.TextSize = 40
+        title.Font = Enum.Font.GothamBold
+        title.TextTransparency = 1
+        title.Parent = bg
+
+        local sub = Instance.new("TextLabel")
+        sub.Size = UDim2.new(1, 0, 0, 24)
+        sub.Position = UDim2.new(0, 0, 0.5, 10)
+        sub.BackgroundTransparency = 1
+        sub.Text = L("intro_sub")
+        sub.TextColor3 = Color3.fromRGB(150, 130, 180)
+        sub.TextSize = 14
+        sub.Font = Enum.Font.Gotham
+        sub.TextTransparency = 1
+        sub.Parent = bg
+
+        local barBack = Instance.new("Frame")
+        barBack.Size = UDim2.new(0, 200, 0, 3)
+        barBack.Position = UDim2.new(0.5, -100, 0.5, 50)
+        barBack.BackgroundColor3 = Color3.fromRGB(30, 25, 45)
+        barBack.BorderSizePixel = 0
+        barBack.Parent = bg
+        local bar = Instance.new("Frame")
+        bar.Size = UDim2.new(0, 0, 1, 0)
+        bar.BackgroundColor3 = Color3.fromRGB(168, 85, 247)
+        bar.BorderSizePixel = 0
+        bar.Parent = barBack
+
+        tween(title, 0.6, {TextTransparency = 0})
+        tween(sub, 0.6, {TextTransparency = 0})
+        TweenService:Create(bar, TweenInfo.new(1.4, Enum.EasingStyle.Cubic, Enum.EasingDirection.InOut), {Size = UDim2.new(1, 0, 1, 0)}):Play()
+        task.wait(1.8)
+        tween(title, 0.5, {TextTransparency = 1})
+        tween(sub, 0.5, {TextTransparency = 1})
+        tween(barBack, 0.5, {BackgroundTransparency = 1})
+        tween(bar, 0.5, {BackgroundTransparency = 1})
+        tween(bg, 0.5, {BackgroundTransparency = 1})
+        task.wait(0.6)
+        gui:Destroy()
+    end)
+    if not ok then warn("[" .. APP_NAME .. "] intro error: " .. tostring(err)) end
+end
+
+--------------------------------------------------------------------
+-- Dump
+--------------------------------------------------------------------
+local PROPERTY_NAMES = {
+    "Anchored", "CanCollide", "CanTouch", "CanQuery", "Transparency", "Reflectance",
+    "Color", "Material", "Size", "CFrame", "Position", "Orientation",
+    "Value", "Visible", "Enabled", "Text", "Image", "Texture", "TextureID", "TextureId",
+    "MeshId", "MeshType", "Scale", "Offset", "SecondaryAxis", "Axis",
+    "Rate", "Speed", "Lifetime", "LightEmission", "Brightness", "Range", "Shadows",
+    "Volume", "PlaybackSpeed", "RollOffMaxDistance", "RollOffMinDistance", "RollOffMode",
+    "Neutral", "TeamColor", "AllowTeamChangeOnTouch", "Duration", "Face", "Locked",
+    "MaxSpeed", "Torque", "TurnSpeed", "Shape", "StudsPerTileU", "StudsPerTileV",
+}
+
+local function safeProperty(object, property)
+    local ok, value = pcall(function() return object[property] end)
+    return ok, value
+end
+
+local function literal(value)
+    local kind = typeof(value)
+    if kind == "string" then return string.format("%q", value) end
+    if kind == "number" or kind == "boolean" then return tostring(value) end
+    if kind == "nil" then return "nil" end
+    if kind == "Vector3" then return string.format("Vector3.new(%s, %s, %s)", value.X, value.Y, value.Z) end
+    if kind == "Vector2" then return string.format("Vector2.new(%s, %s)", value.X, value.Y) end
+    if kind == "Color3" then return string.format("Color3.new(%s, %s, %s)", value.R, value.G, value.B) end
+    if kind == "CFrame" then
+        local values = {value:GetComponents()}
+        for i, n in ipairs(values) do values[i] = tostring(n) end
+        return "CFrame.new(" .. table.concat(values, ", ") .. ")"
+    end
+    if kind == "EnumItem" then return tostring(value) end
+    if kind == "Instance" then return string.format("%q", value:GetFullName()) end
+    return string.format("%q", tostring(value))
+end
+
+local ServiceNames = {
+    "ReplicatedStorage", "Workspace", "Players", "Lighting", "StarterGui", "StarterPack", "StarterPlayer",
+    "SoundService", "Chat", "TextChatService", "RunService", "TweenService", "HttpService", "MarketplaceService",
+    "BadgeService", "Teams", "JointsService", "CollectionService", "PhysicsService", "AssetService",
+    "PolicyService", "SocialService", "TeleportService", "UserInputService", "VRService",
+    "ServerScriptService", "ServerStorage", "ReplicatedFirst",
+}
+
+local function resolveServiceTarget()
+    local ok, target = pcall(function() return game:GetService(S.Service) end)
+    if not ok or not target then return nil, S.Service end
+    if S.SubPath ~= "" then
+        for part in S.SubPath:gmatch("[^/]+") do
+            target = target and target:FindFirstChild(part)
+            if not target then break end
+        end
+    end
+    return target, S.Service
+end
+
+local function dumpObject(root)
+    local lines = {"Dump | " .. APP_NAME, "Root: " .. root:GetFullName(), "Class: " .. root.ClassName}
+    local objects = {root}
+    if S.Children then
+        for _, object in ipairs(root:GetDescendants()) do objects[#objects + 1] = object end
+    end
+    for n, object in ipairs(objects) do
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = "[" .. object.ClassName .. "] " .. object:GetFullName()
+        if S.Attributes then
+            local ok, attributes = pcall(function() return object:GetAttributes() end)
+            if ok then
+                for key, value in pairs(attributes) do
+                    lines[#lines + 1] = "  @" .. tostring(key) .. " = " .. literal(value)
+                end
+            end
+        end
+        if S.Properties then
+            for _, property in ipairs(PROPERTY_NAMES) do
+                local ok, value = safeProperty(object, property)
+                if ok then lines[#lines + 1] = "  ." .. property .. " = " .. literal(value) end
+            end
+        end
+        yieldEvery(n, 300)
+    end
+    if S.SourceFormat then
+        local source = {"-- " .. APP_NAME .. " source-format dump", "local dump = {}"}
+        for n, object in ipairs(objects) do
+            source[#source + 1] = string.format("dump[%q] = {ClassName = %q, Name = %q}", object:GetFullName(), object.ClassName, object.Name)
+            yieldEvery(n, 300)
+        end
+        source[#source + 1] = "return dump"
+        return table.concat(source, "\n")
+    end
+    return table.concat(lines, "\n")
+end
+
+local function performDump(saveToFile, showPreview)
+    setText(UI.Status, L("status_working"))
+    local target, serviceName = resolveServiceTarget()
+    if not target then
+        notify(APP_NAME, L("target_missing", tostring(serviceName)))
+        setText(UI.Status, L("status_ready"))
+        return
+    end
+    local ok, data = pcall(dumpObject, target)
+    if not ok then
+        notify(APP_NAME, L("dump_failed", tostring(data)))
+        setText(UI.Status, L("status_ready"))
+        return
+    end
+    LastDumpData = data
+    if showPreview then
+        local shown = data
+        if #shown > PREVIEW_LIMIT then
+            shown = shown:sub(1, PREVIEW_LIMIT) .. L("preview_cut", PREVIEW_LIMIT, #data)
+        end
+        setText(UI.Preview, shown)
+        setText(UI.Status, L("status_preview", #data))
+    end
+    if saveToFile then
+        safeFolder(DUMP_FOLDER)
+        safeFolder(DUMP_FOLDER .. "/Dump")
+        local name = S.FileName ~= "" and S.FileName or (serviceName .. "_" .. os.date("%Y%m%d_%H%M%S"))
+        name = name:gsub("[^%w_%- ]", "_")
+        local ext = S.SourceFormat and ".lua" or ".txt"
+        LastDumpPath = DUMP_FOLDER .. "/Dump/" .. name .. ext
+        if type(writefile) == "function" then pcall(writefile, LastDumpPath, data) end
+        setText(UI.Status, L("status_saved", LastDumpPath))
+        notify(APP_NAME, L("status_saved", LastDumpPath))
+    end
+end
+
+--------------------------------------------------------------------
+-- Remote Spy (ติดตั้ง hook ครั้งเดียว ใช้ได้ต่อเนื่องแม้เปลี่ยนภาษา)
+--------------------------------------------------------------------
+local Spy = {Enabled = false, Calls = {}, Skip = "sync,update,heartbeat,tick,ping,replicate,stream,position,character,camera,move,cframe", Installed = false, OnChange = nil}
+
+local function shouldSkipRemote(name)
+    name = tostring(name or ""):lower()
+    for term in Spy.Skip:gmatch("[^,%s]+") do
+        if name:find(term:lower(), 1, true) then return true end
+    end
+    return false
+end
+
+local function addSpyCall(remote, method, args)
+    if not Spy.Enabled then return end
+    local okName, name = pcall(function() return remote.Name end)
+    if not okName or shouldSkipRemote(name) then return end
+    local parts = {}
+    for i = 1, args.n or #args do parts[#parts + 1] = literal(args[i]) end
+    local okPath, path = pcall(function() return remote:GetFullName() end)
+    Spy.Calls[#Spy.Calls + 1] = {Source = string.format("%s:%s(%s)", okPath and path or tostring(name), method, table.concat(parts, ", "))}
+    while #Spy.Calls > 200 do table.remove(Spy.Calls, 1) end
+    if Spy.OnChange then Spy.OnChange() end
+end
+
+local function installRemoteSpy()
+    if Spy.Installed then return true end
+    if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then return false end
+    local wrap = newcclosure or function(f) return f end
+    local old
+    old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+        local method = getnamecallmethod()
+        if Spy.Enabled and (method == "FireServer" or method == "InvokeServer") then
+            local isRemote = false
+            pcall(function()
+                isRemote = typeof(self) == "Instance" and (self.ClassName == "RemoteEvent" or self.ClassName == "RemoteFunction")
+            end)
+            if isRemote and not (type(checkcaller) == "function" and checkcaller()) then
+                local args = table.pack(...)
+                task.defer(addSpyCall, self, method, args)
+            end
+        end
+        return old(self, ...)
+    end))
+    Spy.Installed = true
+    return true
+end
+
+local function refreshSpyUi()
+    if not Spy.Enabled then
+        setText(UI.SpyStatus, L("spy_off"))
+    else
+        setText(UI.SpyStatus, L("spy_on", #Spy.Calls))
+    end
+    if #Spy.Calls == 0 then
+        setText(UI.SpyLog, L("spy_log_empty"))
+        return
+    end
+    local lines = {}
+    for i = math.max(1, #Spy.Calls - 14), #Spy.Calls do
+        local src = Spy.Calls[i].Source
+        if #src > 160 then src = src:sub(1, 160) .. "..." end
+        lines[#lines + 1] = src
+    end
+    setText(UI.SpyLog, table.concat(lines, "\n"))
+end
+
+--------------------------------------------------------------------
+-- Map Dump (คงลำดับชั้น Parent/Child)
+--------------------------------------------------------------------
+local function generateMapScript()
+    local rootName = S.MapFolder ~= "" and S.MapFolder or "ValenHub_Map"
+    local lines = {
+        "-- " .. APP_NAME .. " map dump",
+        "-- PlaceId: " .. tostring(game.PlaceId),
+        "-- Generated: " .. os.date("%Y-%m-%d %H:%M:%S"),
+        "local function new(c) local ok, o = pcall(Instance.new, c) return ok and o or nil end",
+        "local root = Instance.new(\"Folder\")",
+        "root.Name = " .. string.format("%q", rootName),
+        "root.Parent = workspace",
+        "local refs = {}",
+    }
+    local skipChars = {}
+    if not S.MapChars then
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character then skipChars[#skipChars + 1] = player.Character end
+        end
+    end
+    local objects, index = {}, {}
+    for n, object in ipairs(workspace:GetDescendants()) do
+        local skip = false
+        if object:IsA("Camera") or object:IsA("Terrain") then
+            skip = true
+        elseif not S.MapScripts and object:IsA("LuaSourceContainer") then
+            skip = true
+        elseif not S.MapChars and (object:IsA("Humanoid") or object:IsA("Animator")) then
+            skip = true
+        else
+            for _, character in ipairs(skipChars) do
+                if object == character or object:IsDescendantOf(character) then skip = true break end
+            end
+        end
+        if not skip then
+            objects[#objects + 1] = object
+            index[object] = #objects
+        end
+        yieldEvery(n, 500)
+    end
+    for i, object in ipairs(objects) do
+        local parent = object.Parent
+        while parent and parent ~= workspace and not index[parent] do parent = parent.Parent end
+        local parentExpr = (parent and index[parent]) and string.format("refs[%d] or root", index[parent]) or "root"
+        local isPart = object:IsA("BasePart")
+        lines[#lines + 1] = string.format("do local o = new(%q) if o then", object.ClassName)
+        lines[#lines + 1] = string.format("o.Name = %q", object.Name)
+        for _, property in ipairs(PROPERTY_NAMES) do
+            if not (isPart and (property == "Position" or property == "Orientation")) then
+                local ok, value = safeProperty(object, property)
+                if ok and typeof(value) ~= "Instance" then
+                    lines[#lines + 1] = string.format("pcall(function() o[%q] = %s end)", property, literal(value))
+                end
+            end
+        end
+        if S.MapScripts and object:IsA("LuaSourceContainer") then
+            local ok, source = pcall(function() return object.Source end)
+            if ok then lines[#lines + 1] = string.format("pcall(function() o.Source = %q end)", source) end
+        end
+        lines[#lines + 1] = string.format("o.Parent = %s", parentExpr)
+        lines[#lines + 1] = string.format("refs[%d] = o end end", i)
+        yieldEvery(i, 100)
+    end
+    lines[#lines + 1] = "return root"
+    return table.concat(lines, "\n"), #objects
+end
+
+--------------------------------------------------------------------
+-- UI (Obsidian)
+--------------------------------------------------------------------
+local launch
+launch = function()
+    local okLib, Library = pcall(function()
+        return loadstring(game:HttpGet(OBSIDIAN_REPO .. "Library.lua"))()
+    end)
+    if not okLib or not Library then
+        warn("[" .. APP_NAME .. "] Failed to load Obsidian: " .. tostring(Library))
+        return
+    end
+    local ThemeManager = loadstring(game:HttpGet(OBSIDIAN_REPO .. "addons/ThemeManager.lua"))()
+    local SaveManager = loadstring(game:HttpGet(OBSIDIAN_REPO .. "addons/SaveManager.lua"))()
+    UI.Library = Library
+    local Options, Toggles = Library.Options, Library.Toggles
+
+    local Window = Library:CreateWindow({
+        Title = APP_NAME,
+        Footer = "v2.0",
+        NotifySide = "Right",
+        ShowCustomCursor = false,
+    })
+
+    local TabHome = Window:AddTab(L("tab_home"), "house")
+    local TabSpy = Window:AddTab(L("tab_spy"), "activity")
+    local TabMap = Window:AddTab(L("tab_map"), "map")
+    local TabSet = Window:AddTab(L("tab_settings"), "settings")
+
+    -- ===== หน้าหลัก =====
+    local gDump = TabHome:AddLeftGroupbox(L("grp_dump"), "download")
+    gDump:AddDropdown("Service", {
+        Values = ServiceNames, Default = indexOf(ServiceNames, S.Service), Text = L("svc"),
+        Callback = function(v) S.Service = v end,
+    })
+    gDump:AddInput("SubPath", {
+        Default = S.SubPath, Text = L("subpath"), Placeholder = "TS/data/plants",
+        Callback = function(v) S.SubPath = trim(v) end,
+    })
+    gDump:AddToggle("DumpChildren", {Text = L("opt_children"), Default = S.Children, Callback = function(v) S.Children = v end})
+    gDump:AddToggle("DumpAttributes", {Text = L("opt_attrs"), Default = S.Attributes, Callback = function(v) S.Attributes = v end})
+    gDump:AddToggle("DumpProperties", {Text = L("opt_props"), Default = S.Properties, Callback = function(v) S.Properties = v end})
+    gDump:AddToggle("DumpSource", {Text = L("opt_source"), Default = S.SourceFormat, Callback = function(v) S.SourceFormat = v end})
+    gDump:AddInput("DumpFileName", {
+        Default = S.FileName, Text = L("filename"), Placeholder = "",
+        Callback = function(v) S.FileName = trim(v) end,
+    })
+    gDump:AddButton({Text = L("btn_dump_file"), Func = function() task.spawn(performDump, true, false) end})
+    gDump:AddButton({Text = L("btn_dump_preview"), Func = function() task.spawn(performDump, false, true) end})
+
+    local gResult = TabHome:AddRightGroupbox(L("grp_result"), "file-text")
+    UI.Status = gResult:AddLabel(LastDumpPath and L("status_saved", LastDumpPath) or L("status_ready"), true)
+    gResult:AddDivider()
+    UI.Preview = gResult:AddLabel(L("preview_empty"), true)
+    gResult:AddButton({Text = L("btn_copy_path"), Func = function()
+        if LastDumpPath and type(setclipboard) == "function" then
+            setclipboard(LastDumpPath)
+            notify(APP_NAME, L("copied"))
+        else
+            notify(APP_NAME, L("no_file"))
+        end
+    end})
+    gResult:AddDivider()
+    gResult:AddLabel(L("home_info"), true)
+
+    -- ===== Remote Spy =====
+    local gSpy = TabSpy:AddLeftGroupbox(L("spy_group"), "radar")
+    gSpy:AddToggle("SpyEnabled", {
+        Text = L("spy_enable"), Tooltip = L("spy_enable_tip"), Default = Spy.Enabled,
+        Callback = function(value)
+            if value then
+                if not installRemoteSpy() then
+                    Spy.Enabled = false
+                    notify(APP_NAME, L("spy_unsupported"))
+                    if Toggles.SpyEnabled then Toggles.SpyEnabled:SetValue(false) end
+                    return
+                end
+            end
+            Spy.Enabled = value
+            refreshSpyUi()
+        end,
+    })
+    gSpy:AddInput("SpySkip", {
+        Default = Spy.Skip, Text = L("spy_skip"), Placeholder = "sync, heartbeat, position",
+        Callback = function(v) Spy.Skip = tostring(v or "") end,
+    })
+    gSpy:AddButton({Text = L("spy_save"), Func = function()
+        safeFolder(DUMP_FOLDER)
+        safeFolder(DUMP_FOLDER .. "/RemoteSpy")
+        local path = DUMP_FOLDER .. "/RemoteSpy/RemoteSpy_" .. os.date("%Y%m%d_%H%M%S") .. ".lua"
+        local lines = {"-- Remote Spy log", "-- PlaceId: " .. tostring(game.PlaceId), "-- Time: " .. os.date("%Y-%m-%d %H:%M:%S"), "-- Total: " .. tostring(#Spy.Calls), ""}
+        for _, entry in ipairs(Spy.Calls) do lines[#lines + 1] = entry.Source end
+        if type(writefile) == "function" then pcall(writefile, path, table.concat(lines, "\n")) end
+        notify(APP_NAME, L("spy_saved", #Spy.Calls, path))
+    end})
+    gSpy:AddButton({Text = L("spy_clear"), Func = function()
+        Spy.Calls = {}
+        refreshSpyUi()
+        notify(APP_NAME, L("spy_cleared"))
+    end})
+
+    local gSpyLog = TabSpy:AddRightGroupbox(L("spy_log_group"), "scroll-text")
+    UI.SpyStatus = gSpyLog:AddLabel(L("spy_off"), true)
+    gSpyLog:AddDivider()
+    UI.SpyLog = gSpyLog:AddLabel(L("spy_log_empty"), true)
+    Spy.OnChange = refreshSpyUi
+    refreshSpyUi()
+
+    -- ===== แมพ =====
+    local gMap = TabMap:AddLeftGroupbox(L("map_group"), "map")
+    gMap:AddInput("MapFolder", {
+        Default = S.MapFolder, Text = L("map_folder"), Placeholder = "ValenHub_Map",
+        Callback = function(v) S.MapFolder = trim(v) end,
+    })
+    gMap:AddToggle("MapScripts", {Text = L("map_scripts"), Default = S.MapScripts, Callback = function(v) S.MapScripts = v end})
+    gMap:AddToggle("MapChars", {Text = L("map_chars"), Default = S.MapChars, Callback = function(v) S.MapChars = v end})
+    gMap:AddButton({Text = L("map_save_studio"), Func = function()
+        if type(saveinstance) == "function" then
+            local ok, err = pcall(function() saveinstance({FileName = S.MapFolder, Mode = "optimized"}) end)
+            notify(APP_NAME, ok and L("map_studio_ok") or L("map_failed", tostring(err)))
+        else
+            notify(APP_NAME, L("map_unsupported"))
+        end
+    end})
+    gMap:AddButton({Text = L("map_dump_copy"), Func = function()
+        task.spawn(function()
+            setText(UI.MapStatus, L("map_scanning"))
+            notify(APP_NAME, L("map_scanning"))
+            local ok, result, count = pcall(generateMapScript)
+            if not ok then
+                setText(UI.MapStatus, L("map_failed", tostring(result)))
+                notify(APP_NAME, L("map_failed", tostring(result)))
+                return
+            end
+            LastMapScript = result
+            if type(setclipboard) == "function" then pcall(setclipboard, result) end
+            safeFolder(DUMP_FOLDER)
+            safeFolder(DUMP_FOLDER .. "/Map")
+            if type(writefile) == "function" then
+                pcall(writefile, DUMP_FOLDER .. "/Map/" .. (S.MapFolder ~= "" and S.MapFolder or "ValenHub_Map") .. ".lua", result)
+            end
+            setText(UI.MapStatus, L("map_copied", count))
+            notify(APP_NAME, L("map_copied", count))
+        end)
+    end})
+    gMap:AddButton({Text = L("map_copy_last"), Func = function()
+        if LastMapScript and type(setclipboard) == "function" then
+            setclipboard(LastMapScript)
+            notify(APP_NAME, L("copied"))
+        else
+            notify(APP_NAME, L("map_none"))
+        end
+    end})
+
+    local gMapInfo = TabMap:AddRightGroupbox(L("map_howto_group"), "info")
+    UI.MapStatus = gMapInfo:AddLabel(L("map_status_idle"), true)
+    gMapInfo:AddDivider()
+    gMapInfo:AddLabel(L("map_howto"), true)
+
+    -- ===== ตั้งค่า =====
+    local gLang = TabSet:AddLeftGroupbox(L("set_lang_group"), "languages")
+    local langValues = {"ไทย (TH)", "English (EN)"}
+    gLang:AddDropdown("LangSelect", {
+        Values = langValues, Default = AppConfig.Lang == "th" and 1 or 2, Text = L("set_lang"),
+        Callback = function(v)
+            local newLang = (v == langValues[2]) and "en" or "th"
+            if newLang == AppConfig.Lang then return end
+            AppConfig.Lang = newLang
+            saveJsonFile(CONFIG_FILE, AppConfig)
+            task.delay(0.2, function()
+                pcall(function() Library:Unload() end)
+                task.wait(0.4)
+                launch()
+            end)
+        end,
+    })
+    gLang:AddLabel(L("set_lang_note"), true)
+
+    local gMenu = TabSet:AddRightGroupbox(L("set_menu_group"), "wrench")
+    gMenu:AddLabel(L("set_keybind")):AddKeyPicker("MenuKeybind", {Default = "RightShift", NoUI = true, Text = L("set_keybind")})
+    Library.ToggleKeybind = Options.MenuKeybind
+    gMenu:AddButton({Text = L("set_unload"), Func = function() Library:Unload() end})
+
+    ThemeManager:SetLibrary(Library)
+    SaveManager:SetLibrary(Library)
+    SaveManager:IgnoreThemeSettings()
+    SaveManager:SetIgnoreIndexes({"MenuKeybind", "LangSelect"})
+    ThemeManager:SetFolder(ROOT_FOLDER)
+    SaveManager:SetFolder(ROOT_FOLDER)
+    SaveManager:BuildConfigSection(TabSet)
+    ThemeManager:ApplyToTab(TabSet)
+    SaveManager:LoadAutoloadConfig()
+
+    notify(L("ready_title"), L("ready_desc"))
+end
+
+showIntro()
+launch()
