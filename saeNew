@@ -7579,9 +7579,9 @@ function ObsidianGlassEngine:CreateWindow(cfg)
     local localLogo = "rbxassetid://138186404172062"
 
     local EngineWindow = Library:CreateWindow({
-        Title = "PAYOMBØYZ",
-        Name = "เก็บไข่ไปกับพยอมบอย",
-        Subtitle = "เก็บไข่ไปกับพยอมบอย",
+        Title = "AXOR HUB",
+        Name = "เก็บไข่ไปกับแอ็กซอร์",
+        Subtitle = "เก็บไข่ไปกับแอ็กซอร์",
         VersionTag = "v5.0.0",
         DefaultTab = "ฟาร์ม",
         Theme = "Crimson",
